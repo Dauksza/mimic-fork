@@ -11,7 +11,9 @@ import ghidra.program.model.symbol.SymbolIterator;
 
 import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileWriter;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -169,7 +171,7 @@ public class MimicExport extends GhidraScript {
         result.append("\"analysis_note\":").append(json("Ghidra static analysis output. Decompiled functions are evidence for authorized analysis, not a guarantee of complete recovered behavior.")).append("\n");
         result.append("}\n");
 
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(output))) {
+        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(output), StandardCharsets.UTF_8))) {
             writer.write(result.toString());
         }
         println("Mimic exported Ghidra report: " + output);
