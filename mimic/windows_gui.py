@@ -624,7 +624,8 @@ class MimicWindowsApp:
     def _browse_ghidra(self):
         # Keep the native Windows folder chooser owned by Mimic so it cannot
         # open behind the main window and make the application appear frozen.
-        current = Path(self.ghidra_var.get().strip()).expanduser()
+        configured = self.ghidra_var.get().strip()
+        current = Path(configured).expanduser() if configured else Path.home()
         initialdir = current if current.is_dir() else Path.home()
         path = filedialog.askdirectory(
             parent=self.root,
