@@ -86,7 +86,7 @@ public class MimicExport extends GhidraScript {
         int maxDecompile = 250;
         int perFunctionTimeout = 12;
         if (args.length > 1) {
-            try { maxDecompile = Math.max(0, Math.min(5000, Integer.parseInt(args[1]))); }
+            try { maxDecompile = Math.max(0, Math.min(50000, Integer.parseInt(args[1]))); }
             catch (Exception ignored) { }
         }
         if (args.length > 2) {
