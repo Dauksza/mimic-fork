@@ -384,6 +384,9 @@ class MimicWindowsApp:
         self.analyze_button.configure(state="normal")
         self.open_analysis_button.configure(state="normal")
         self.arm_button.configure(state="normal")
+        self.build_button.configure(
+            state="normal" if self.capture_dir and (self.capture_dir / "events.jsonl").exists() else "disabled"
+        )
         if error:
             self._log("Analysis failed: " + error)
             messagebox.showerror("Analysis failed", error)
