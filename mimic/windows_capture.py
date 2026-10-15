@@ -94,9 +94,10 @@ def _element_snapshot(window, max_controls=450):
             # Do not retrieve ValuePattern contents. Edit/document values are
             # intentionally omitted because they may contain private information.
             sensitive_or_dynamic = kind.casefold() in {
-                "edit", "document", "password", "dataitem", "cell", "text"
+                "edit", "document", "password", "dataitem", "cell"
             }
-            name = "[value omitted]" if sensitive_or_dynamic else _safe_text(getattr(info, "name", ""), 160)
+            raw_name = getattr(info, "name", "")
+            name = "[value omitted]" if sensitive_or_dynamic else _safe_text(raw_name, 160)
             rect = wrapper.rectangle()
             controls.append({
                 "type": kind,
@@ -240,7 +241,7 @@ class CaptureSession:
                 try:
                     snapshot = snapshot_process(self.pid, self.title)
                     snapshot["sequence"] = self._sequence + 1
-                    signature_data = {k: v for k, v in snapshot.items() if k != "timestamp"}
+                    signature_data = {k: v for k, v in snapshot.items() if k not in {"timestamp", "sequence"}}
                     serialized = json.dumps(signature_data, ensure_ascii=False, sort_keys=True)
                     signature = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
                     image_data = _screenshot_bytes(self.pid)
@@ -279,7 +280,7 @@ def start_armed_capture(out_dir, on_target, on_status=None, poll_interval=0.75):
 
     status = on_status or (lambda message: None)
     own_pid = os.getpid()
-    baseline = {row["hwnd"] for row in list_windows(exclude_pid=own_pid)}
+    baseline = {row["hwnd"]: row["title"] for row in list_windows(exclude_pid=own_pid)}
     stopped = threading.Event()
 
     def watch():
@@ -287,11 +288,11 @@ def start_armed_capture(out_dir, on_target, on_status=None, poll_interval=0.75):
         while not stopped.wait(poll_interval):
             try:
                 current = list_windows(exclude_pid=own_pid)
-                new_windows = [row for row in current if row["hwnd"] not in baseline]
+                new_windows = [row for row in current if row["hwnd"] not in baseline or baseline.get(row["hwnd"]) != row["title"]]
                 # Ignore shells and known OS surface windows by choosing the
                 # first app window with a title and useful dimensions.
                 if new_windows:
-                    target = new_windows[0]
+                    target = max(new_windows, key=lambda row: row["rect"][2] * row["rect"][3])
                     status("Detected target: " + target["title"])
                     on_target(target)
                     return
