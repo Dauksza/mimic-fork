@@ -19,7 +19,7 @@ def main(argv=None):
     parser.add_argument("target", help="EXE/DLL, folder, APK/AAB/JAR, IPA, app.asar, source archive, installer, or source project")
     parser.add_argument("-o", "--out", help="new or existing Mimic analysis output folder")
     parser.add_argument("--ghidra-home", default=os.environ.get("GHIDRA_HOME"),
-                        help="Ghidra directory containing support/analyzeHeadless.bat")
+                        help="Ghidra installation folder containing support/analyzeHeadless (or analyzeHeadless.bat on Windows)")
     parser.add_argument("--max-decompile", type=int, default=int(os.environ.get("MIMIC_GHIDRA_MAX_DECOMPILE", "1000")),
                         help="maximum decompiled functions per primary binary (0-5000; higher takes longer)")
     parser.add_argument("--model", default=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"),
