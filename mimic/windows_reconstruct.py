@@ -153,6 +153,7 @@ def read_runtime_events(session_root, limit=300):
 
 def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b", base_url=None, static_report=None):
     root, metadata, states, screenshots = read_session(session_dir)
+    runtime_events = read_runtime_events(root)
     client = Ollama(base_url=base_url, model=model)
     available = client.models()
     if client.model not in available:
@@ -237,6 +238,8 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
         + "Capture times: " + str(metadata.get("started_at")) + " / " + str(metadata.get("ended_at")) + "\n"
         + "Window process ID: " + str(metadata.get("target_pid")) + "\n"
         + "Observed UI Automation states (sampled):\n" + json.dumps(states, ensure_ascii=False)[:26000] + "\n"
+        + "Optional Frida runtime evidence (sanitized module, file, registry and network destination metadata):\n"
+        + json.dumps(runtime_events, ensure_ascii=False)[:18000] + "\n"
         + "Visual analysis notes from local vision model:\n" + visual_spec[:5500] + "\n"
         + "Ghidra static reverse-engineering evidence (function inventory, symbols, strings, selected decompilation):\n"
         + json.dumps(ghidra_spec, ensure_ascii=False)[:17000]
@@ -277,6 +280,8 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
         "provider": "local Ollama only",
         "sampled_states": len(states),
         "screenshots_seen": len(screenshots),
+        "runtime_events_used": len(runtime_events),
+        "runtime_trace_used": bool(runtime_events),
         "visual_analysis_used": bool(visual_spec),
         "ghidra_static_analysis_used": bool(ghidra_spec),
         "ghidra_function_count": ghidra_spec.get("function_count"),
