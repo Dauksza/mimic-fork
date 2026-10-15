@@ -10,13 +10,15 @@ dependencies = ["requests>=2.28"]
 
 [project.optional-dependencies]
 capture = ["mitmproxy>=10"]
-windows = ["pywinauto>=0.6.8", "Pillow>=10"]
+windows = ["pywinauto>=0.6.8", "Pillow>=10", "pefile>=2023.2.7"]
+analysis = ["pefile>=2023.2.7"]
 
 [project.scripts]
 mimic = "mimic.cli:main"
 mimic-build = "mimic.build_cli:main"
 mimic-desktop = "mimic.windows_gui:main"
 mimic-desktop-build = "mimic.windows_build_cli:main"
+mimic-analyze = "mimic.analyze_cli:main"
 
 [build-system]
 requires = ["setuptools>=64"]
