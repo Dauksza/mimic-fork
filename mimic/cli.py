@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 from . import codegen
+from .ollama import Ollama, OllamaError
 from . import unpin
 from .sources import har
 from .sources import mitm
@@ -94,6 +95,14 @@ iPhone capture — do this once, then just reopen the app to add traffic:
         sys.exit("failed to launch mitmweb")
 
 
+def _ollama_reachable():
+    try:
+        Ollama().models()
+        return True
+    except OllamaError:
+        return False
+
+
 def cmd_doctor(args):
     ok = True
 
@@ -108,9 +117,8 @@ def cmd_doctor(args):
     print("mimic setup check:\n")
     check("proxy (mitmweb or uvx)", _mitmweb_cmd() is not None,
           "install uv: curl -LsSf https://astral.sh/uv/install.sh | sh")
-    check("AI generator (claude or opencode)",
-          shutil.which("claude") is not None or shutil.which("opencode") is not None,
-          "install Claude Code or OpenCode (https://opencode.ai), or use `mimic gen --prompt-only`")
+    check("Ollama server", _ollama_reachable(),
+          "install Ollama, start it, then run `ollama pull qwen2.5-coder:14b`")
     reachable = False
     try:
         mitm.Mitm().flows()
@@ -213,8 +221,7 @@ def main(argv=None):
     gp.add_argument("host")
     gp.add_argument("-o", "--out", help="output .py path")
     gp.add_argument("--model", default="qwen2.5-coder:14b", help="installed local Ollama model")
-    gp.add_argument("--generator", default="claude", choices=["claude", "opencode"],
-                    help="AI generator to use (default: claude)")
+    gp.add_argument("--generator", default="ollama", choices=["ollama"], help="local Ollama only")
     gp.add_argument("--prompt-only", action="store_true", help="print the prompt instead of calling the AI generator")
     gp.add_argument("--har", metavar="FILE", help="read from a HAR file instead of mitmweb")
     gp.set_defaults(func=cmd_gen)
