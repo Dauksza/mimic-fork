@@ -1323,6 +1323,7 @@ def _compact_analysis(manifest):
         },
         "warnings": manifest.get("warnings", [])[:30],
         "analysis_elapsed_seconds": manifest.get("analysis_elapsed_seconds"),
+        "tool_availability": manifest.get("tool_availability", {}),
         "evidence": {},
     }
 
