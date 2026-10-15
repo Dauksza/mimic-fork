@@ -47,6 +47,19 @@ For PE metadata extraction during analysis:
 python -m pip install -e ".[analysis]"
 ```
 
+## Windows graphical app (no terminal needed for normal use)
+
+For a double-click Windows setup:
+
+1. Download/clone this repository to a folder you control.
+2. Double-click `Install-Mimic.bat` once. It creates a private `.venv` and installs Mimic plus its Windows, PE-analysis, and optional Frida dependencies.
+3. Double-click `Mimic.vbs` to start Mimic without leaving a command prompt open. It launches `Mimic.pyw` with that private environment.
+4. Choose **Analyze Any App** for a standalone analysis, or **Capture & Rebuild** to open a program and recreate its visible Windows UI.
+
+The **Analyze Any App** page has file/folder pickers, results-folder selection, a local Ollama model list refresh, Ollama server URL, Ghidra path, the function-decompilation budget, an optional AI findings report, a live activity log, and an Open Results Folder button. Missing optional analyzers are reported rather than silently treated as successful. You do not need to use the command-line examples below for everyday GUI operation.
+
+The setup script installs Python dependencies only. Ghidra, JADX, Apktool, ILSpy, WABT, and other specialist tools must be installed separately if your target needs them. Ollama must already be running and your chosen model must be installed locally. A first-time install needs internet access for Python packages; subsequent launches use the local environment.
+
 ## Reverse-engineer app formats with mimic-analyze
 
 Run format-aware static analysis without a desktop capture session:
