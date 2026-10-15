@@ -106,7 +106,7 @@ ollama pull qwen2.5-coder:14b
 ollama pull qwen2.5vl:7b
 ```
 
-Install Ghidra separately from the official [Ghidra releases](https://github.com/NationalSecurityAgency/ghidra/releases) and extract it. The configured folder must contain `support\\analyzeHeadless.bat`. Set `GHIDRA_HOME` to that folder or select it in the Mimic UI.
+Install Ghidra separately from the official [Ghidra releases](https://github.com/NationalSecurityAgency/ghidra/releases) and extract it. The configured folder must contain Ghidra's headless launcher: `support\\analyzeHeadless.bat` on Windows, or `support/analyzeHeadless` on Linux/macOS. Set `GHIDRA_HOME` to that folder. Windows GUI capture itself remains Windows-only.
 
 Launch Mimic:
 
