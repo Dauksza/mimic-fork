@@ -165,9 +165,15 @@ def detect_runtime(path):
         facts["frameworks"].append("WebAssembly")
         return facts
     if ext in PE_TYPES or ext in NATIVE_TYPES or not ext:
-        signature = b""
         with target.open("rb") as stream:
-            signature = stream.read(65536)
+            head = stream.read(1_048_576)
+            size = target.stat().st_size
+            if size > 1_048_576:
+                stream.seek(max(0, size - 4_194_304))
+                tail = stream.read(4_194_304)
+            else:
+                tail = b""
+        signature = head + b"\n" + tail
         if b"PyInstaller" in signature or b"pyi-windows-manifest-filename" in signature:
             facts["frameworks"].append("PyInstaller")
         if b"MSIL" in signature or b".NET" in signature:
