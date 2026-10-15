@@ -20,7 +20,7 @@ def main(argv=None):
     parser.add_argument("-o", "--out", help="new or existing Mimic analysis output folder")
     parser.add_argument("--ghidra-home", default=os.environ.get("GHIDRA_HOME"),
                         help="Ghidra directory containing support/analyzeHeadless.bat")
-    parser.add_argument("--model", default=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"),
+    parser.add_argument("--max-decompile", type=int, default=int(os.environ.get("MIMIC_GHIDRA_MAX_DECOMPILE", "1000")),\n                        help="maximum decompiled functions per primary binary (0-5000; higher takes longer)")\n    parser.add_argument("--model", default=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"),
                         help="installed local Ollama model for the evidence-based summary")
     parser.add_argument("--ollama-url", default=None, help="local Ollama base URL; defaults to OLLAMA_HOST or localhost")
     parser.add_argument("--no-summary", action="store_true", help="run static analyzers without the Ollama summary")
@@ -45,6 +45,9 @@ def main(argv=None):
     print("Analysis manifest: " + str(manifest))
     for warning in report.get("warnings", []):
         print("WARNING: " + str(warning))
+    if report.get("analysis_error"):
+        print("Required analysis stage failed: " + str(report["analysis_error"]), file=sys.stderr)
+        return 1
 
     if not args.no_summary:
         try:
