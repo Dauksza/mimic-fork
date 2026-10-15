@@ -138,7 +138,7 @@ def detect_runtime(path):
         try:
             with zipfile.ZipFile(target) as archive:
                 names = {item.filename.replace("\\\\", "/").casefold() for item in archive.infolist()[:MAX_ARCHIVE_MEMBERS]}
-            if any(name.endswith("androidmanifest.xml") for name in names) and any("/classes" in name and name.endswith(".dex") for name in names):
+            if any(name.endswith("androidmanifest.xml") for name in names) and any(name.endswith(".dex") and (name.rsplit("/", 1)[-1] == "classes.dex" or (name.rsplit("/", 1)[-1].startswith("classes") and name.rsplit("/", 1)[-1][7:-4].isdigit())) for name in names):
                 facts["type"] = "android_package"
                 facts["frameworks"].append("Android/Dalvik")
             elif any("/payload/" in name and name.endswith("/info.plist") for name in names):
@@ -1058,7 +1058,6 @@ def _redact_analysis_text(text, limit=4000):
     text = str(text or "")
     text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", text)
     text = re.sub(r"(?i)((?:access_?token|refresh_?token|password|passwd|secret|api.?key|authorization|cookie|client_secret)\s*[:=]\s*)[^\s,;]+", r"\1[REDACTED]", text)
-    text = re.sub(r"(?i)(https?://[^/\s:]+/)[^ \t\r\n\"']+", r"\1[PATH_REDACTED]", text) if False else text
     return text[:limit]
 
 
