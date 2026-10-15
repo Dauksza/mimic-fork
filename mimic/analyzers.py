@@ -449,8 +449,24 @@ def _analyze_android(target, out_dir, ghidra_home, status, max_decompile=1000):
             nested_summaries.append({"error": "Could not extract nested APKs: " + str(exc)[:300]})
             nested_apks = []
         for index, nested_apk in enumerate(nested_apks[:12]):
-            status("Found embedded Android APK " + str(index + 1) + "/" + str(len(nested_apks)))
-            nested_summaries.append({"apk": str(nested_apk), "nested_apk_path": str(nested_apk)})
+            status("Analyzing embedded Android APK " + str(index + 1) + "/" + str(len(nested_apks)))
+            try:
+                child = _analyze_android(
+                    nested_apk,
+                    output / "nested-apk" / (str(index).zfill(2) + "_" + Path(nested_apk).stem[:50]),
+                    ghidra_home, status,
+                    max_decompile=max(40, min(250, max_decompile // max(1, len(nested_apks)))),
+                )
+                nested_summaries.append({
+                    "apk": str(nested_apk),
+                    "package_files": child.get("package_files", [])[:400],
+                    "tools": child.get("tools", {}),
+                    "native_modules": child.get("native_modules", []),
+                    "manifest": child.get("manifest"),
+                    "warnings": child.get("warnings", []),
+                })
+            except (ReverseEngineeringError, GhidraError, OSError, ValueError, zipfile.BadZipFile) as exc:
+                nested_summaries.append({"apk": str(nested_apk), "error": str(exc)[:300]})
     report: dict[str, Any] = {
         "type": "android_package",
         "target": str(target),
