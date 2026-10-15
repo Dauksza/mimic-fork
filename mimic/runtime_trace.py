@@ -17,6 +17,15 @@ class RuntimeTraceError(RuntimeError):
     pass
 
 
+def _redact_windows_user_path(value):
+    normalized = value.replace("/", "\\")
+    parts = normalized.split("\\")
+    for index, part in enumerate(parts[:-1]):
+        if part.casefold() == "users":
+            parts[index + 1] = "[USER]"
+    return "\\".join(parts)
+
+
 FRIDA_SCRIPT = r"""
 'use strict';
 
@@ -189,7 +198,7 @@ class RuntimeTrace:
             if isinstance(value, str):
                 value = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", value)
                 value = re.sub(r"(?i)(password|passwd|token|secret|api.?key|authorization|cookie)(\s*[:=]\s*)\S+", r"\1=[REDACTED]", value)
-                value = re.sub(r"(?i)\\\\Users\\\\[^\\\\]+", r"\\\\Users\\\\[USER]", value)
+                value = _redact_windows_user_path(value)
                 record[key] = value[:700]
         self._stream.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._stream.flush()
