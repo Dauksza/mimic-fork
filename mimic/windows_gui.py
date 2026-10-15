@@ -10,7 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .ghidra import analyze_binary, find_ghidra_home
+from .ghidra import find_ghidra_home
+from .analyzers import reverse_engineer, summarize_analysis_manifest
 from .windows_capture import (
     CaptureSession,
     WindowsCaptureError,
@@ -250,21 +251,34 @@ class MimicWindowsApp:
         def worker():
             try:
                 reverse_dir = capture_dir / "reverse-engineering"
-                report = analyze_binary(
-                    binary, reverse_dir, ghidra_home=ghidra_home,
+                report = reverse_engineer(
+                    binary, str(reverse_dir), ghidra_home=ghidra_home,
                     on_status=self._status_from_worker,
                 )
+                if report.get("analysis_error"):
+                    raise RuntimeError(report["analysis_error"])
+                manifest = reverse_dir / "mimic-analysis-manifest.json"
+                analysis_summary = None
+                try:
+                    analysis_summary = summarize_analysis_manifest(str(manifest), model=model)
+                    self._status_from_worker("Local Ollama has summarized static-analysis findings; reconstructing the UI from all available evidence…")
+                except Exception as summary_error:
+                    self._status_from_worker("Analysis summary note: " + str(summary_error)[:260])
                 from .windows_reconstruct import reconstruct_desktop
                 files, notes = reconstruct_desktop(
                     str(capture_dir), str(output), model=model,
-                    static_report=str(reverse_dir / "ghidra-analysis.json"),
+                    static_report=str(manifest),
                 )
+                analyzed = report.get("analysis", {})
+                functions = analyzed.get("total_function_count", analyzed.get("function_count", 0)) if isinstance(analyzed, dict) else 0
                 message = (
-                    "Ghidra analyzed " + str(report.get("analyzed_binary", binary)) +
-                    " and found " + str(report.get("function_count", 0)) +
-                    " functions. Created " + str(len(files)) + " project files at " +
-                    str(output) + ". Review the generated code before running main.py."
+                    "Static reverse engineering finished for " + str(binary) +
+                    "; Ghidra found " + str(functions) + " functions. Created " +
+                    str(len(files)) + " project files at " + str(output) +
+                    ". Review the generated code before running main.py."
                 )
+                if analysis_summary:
+                    message += " Ollama analysis report: " + analysis_summary["markdown"]
                 if notes:
                     message += " | " + "; ".join(notes)
                 self.root.after(0, self._build_finished, True, message)
