@@ -1109,6 +1109,48 @@ def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=
     return report
 
 
+
+
+
+def _collect_tool_availability(value, result=None):
+    if result is None:
+        result = {}
+    if isinstance(value, dict):
+        tools = value.get("tools")
+        if isinstance(tools, dict):
+            for name, item in tools.items():
+                if isinstance(item, dict):
+                    status = item.get("status", "available" if item.get("available") else "unknown")
+                    entry = {
+                        "status": status,
+                        "available": item.get("available"),
+                    }
+                    if item.get("note"):
+                        entry["note"] = str(item["note"])[:400]
+                    if item.get("exit_code") is not None:
+                        entry["exit_code"] = item["exit_code"]
+                    result[name] = entry
+                else:
+                    result[name] = {"status": "reported", "value": str(item)[:200]}
+        if isinstance(value.get("extractor"), dict):
+            extractor = value["extractor"]
+            result["package_extractor"] = {
+                "status": extractor.get("status", "unknown"),
+                "available": extractor.get("available"),
+                "exit_code": extractor.get("exit_code"),
+            }
+        if value.get("program_name") and "function_count" in value:
+            result["ghidra"] = {"status": "ok", "available": True}
+        for child in value.values():
+            if isinstance(child, (dict, list)):
+                _collect_tool_availability(child, result)
+    elif isinstance(value, list):
+        for child in value[:100]:
+            if isinstance(child, (dict, list)):
+                _collect_tool_availability(child, result)
+    return result
+
+
 def reverse_engineer(target, out_dir, *, ghidra_home=None, max_decompile=1000, on_status=None):
     """Choose local analyzers for common desktop/mobile/archive/source formats."""
     status = on_status or (lambda message: None)
@@ -1213,6 +1255,9 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, max_decompile=1000, o
         report["warnings"].append(str(exc))
         report["analysis_error"] = str(exc)
     report["analysis_elapsed_seconds"] = round(time.monotonic() - start, 2)
+    report["tool_availability"] = _collect_tool_availability(report.get("analysis", {}))
+    if ghidra_home or find_ghidra_home():
+        report["tool_availability"].setdefault("ghidra", {"status": "installed", "available": True})
     manifest_path = output / "mimic-analysis-manifest.json"
     manifest_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     report["manifest_path"] = str(manifest_path)
