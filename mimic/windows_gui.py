@@ -25,8 +25,8 @@ class MimicWindowsApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MIMIC | Windows Reverse Engineering")
-        self.root.geometry("1020x860")
-        self.root.minsize(850, 720)
+        self.root.geometry("1160x1020")
+        self.root.minsize(950, 800)
         self.root.configure(bg="#0b1220")
         self.capture = None
         self.runtime_trace = None
@@ -36,6 +36,8 @@ class MimicWindowsApp:
         self.capture_dir = None
         self.busy = False
         self.model_var = tk.StringVar(value=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"))
+        self.ollama_url_var = tk.StringVar(value=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
+        self.model_combos = []
         self.max_decompile_var = tk.StringVar(value=os.environ.get("MIMIC_GHIDRA_MAX_DECOMPILE", "1000"))
         self.output_var = tk.StringVar(value=str(Path.home() / "MimicProjects" / "Reconstructions" / "desktop-clone"))
         self.ghidra_var = tk.StringVar(value=str(find_ghidra_home() or os.environ.get("GHIDRA_HOME", "")))
@@ -50,84 +52,362 @@ class MimicWindowsApp:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("TButton", font=("Segoe UI", 10), padding=(12, 8))
+        style.configure("TButton", font=("Segoe UI", 10), padding=(11, 7))
         style.configure("TLabel", background="#0b1220", foreground="#d8e1f0", font=("Segoe UI", 10))
-        style.configure("TEntry", fieldbackground="#111b2e", foreground="#edf3ff", padding=8)
+        style.configure("TEntry", fieldbackground="#111b2e", foreground="#edf3ff", padding=7)
+        style.configure("TCombobox", fieldbackground="#111b2e", foreground="#edf3ff", padding=6)
+        style.configure("TNotebook", background="#0b1220", borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(18, 10), font=("Segoe UI", 10, "bold"))
+        style.configure("Horizontal.TProgressbar", troughcolor="#111b2e", background="#75e0d0")
 
-        header = tk.Frame(self.root, bg="#101b2d", padx=26, pady=20)
+        header = tk.Frame(self.root, bg="#101b2d", padx=25, pady=15)
         header.pack(fill="x")
-        tk.Label(header, text="MIMIC", fg="#75e0d0", bg="#101b2d", font=("Segoe UI", 23, "bold")).pack(anchor="w")
-        tk.Label(header, text="WINDOWS OBSERVER  /  GHIDRA  /  LOCAL OLLAMA",
+        tk.Label(header, text="MIMIC", fg="#75e0d0", bg="#101b2d",
+                 font=("Segoe UI", 22, "bold")).pack(anchor="w")
+        tk.Label(header, text="LOCAL APP ANALYSIS  /  GHIDRA  /  OLLAMA",
                  fg="#c5d1e5", bg="#101b2d", font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 0))
 
-        body = tk.Frame(self.root, bg="#0b1220", padx=26, pady=16)
-        body.pack(fill="both", expand=True)
-        tk.Label(body, text="Observe → Reverse engineer → Reconstruct",
-                 font=("Segoe UI", 15, "bold")).pack(anchor="w")
-        instructions = (
-            "1. Click ARM CAPTURE.  2. Open the target program.  3. Exercise its screens and workflows.\n"
-            "4. Click STOP CAPTURE.  5. Generate Desktop Copy runs Ghidra on the selected EXE, then uses local Ollama.\n"
-            "Mimic records the selected process's visible UI. No global keylogging or clipboard capture."
-        )
-        tk.Label(body, text=instructions, justify="left", wraplength=930, fg="#a9bad3",
-                 bg="#0b1220", font=("Segoe UI", 10), pady=9).pack(anchor="w")
-        tk.Checkbutton(
-            body,
-            text="Advanced runtime trace via Frida (modules, file/registry paths and connection destinations; no payloads)",
+        workspace = tk.Frame(self.root, bg="#0b1220", padx=18, pady=12)
+        workspace.pack(fill="both", expand=True)
+        self.notebook = ttk.Notebook(workspace)
+        self.notebook.pack(fill="both", expand=True)
+
+        self.capture_page = tk.Frame(self.notebook, bg="#0b1220", padx=20, pady=16)
+        self.analysis_page = tk.Frame(self.notebook, bg="#0b1220", padx=20, pady=16)
+        self.notebook.add(self.capture_page, text="Capture & Rebuild")
+        self.notebook.add(self.analysis_page, text="Analyze Any App")
+
+        # Capture & rebuild page
+        page = self.capture_page
+        tk.Label(page, text="Observe a program, then rebuild its visible interface",
+                 bg="#0b1220", fg="#f0f5ff", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        tk.Label(
+            page,
+            text="Arm capture first, open the target Windows program, and use its normal screens and workflows. Stop capture to save evidence, then generate a separate PySide6 reconstruction.",
+            justify="left", wraplength=1040, fg="#a9bad3", bg="#0b1220",
+            font=("Segoe UI", 10), pady=7,
+        ).pack(anchor="w")
+
+        self.runtime_trace_check = tk.Checkbutton(
+            page,
+            text="Advanced runtime trace via Frida (module loads, file/registry paths and connection destinations; no payloads)",
             variable=self.runtime_trace_var,
             bg="#0b1220", fg="#c5d1e5", selectcolor="#132238",
             activebackground="#0b1220", activeforeground="#75e0d0",
             font=("Segoe UI", 9), anchor="w",
-        ).pack(anchor="w", pady=(0, 8))
+        )
+        self.runtime_trace_check.pack(anchor="w", pady=(2, 8))
 
-        buttons = tk.Frame(body, bg="#0b1220")
-        buttons.pack(fill="x", pady=(4, 10))
-        self.arm_button = ttk.Button(buttons, text="ARM CAPTURE", command=self._arm)
+        capture_buttons = tk.Frame(page, bg="#0b1220")
+        capture_buttons.pack(fill="x", pady=(2, 12))
+        self.arm_button = ttk.Button(capture_buttons, text="ARM CAPTURE", command=self._arm)
         self.arm_button.pack(side="left")
-        self.stop_button = ttk.Button(buttons, text="STOP CAPTURE", command=self._stop, state="disabled")
+        self.stop_button = ttk.Button(capture_buttons, text="STOP CAPTURE", command=self._stop, state="disabled")
         self.stop_button.pack(side="left", padx=(8, 0))
-        self.build_button = ttk.Button(buttons, text="GENERATE DESKTOP COPY", command=self._build, state="disabled")
+        self.build_button = ttk.Button(capture_buttons, text="GENERATE DESKTOP COPY", command=self._build, state="disabled")
         self.build_button.pack(side="left", padx=(8, 0))
 
-        tk.Label(body, text="Detected target executable (EXE / DLL)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        binary_row = tk.Frame(body, bg="#0b1220")
-        binary_row.pack(fill="x", pady=(3, 8))
-        ttk.Entry(binary_row, textvariable=self.binary_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(binary_row, text="Browse EXE", command=self._browse_binary).pack(side="left", padx=(8, 0))
+        self._field(page, "Detected target executable (EXE / DLL)", self.binary_var, 0, self._browse_binary, "Browse EXE")
+        self._field(page, "Ghidra installation folder", self.ghidra_var, 1, self._browse_ghidra, "Browse Ghidra")
+        self._model_field(page, row=2, include_url=False)
+        self._field(page, "Maximum functions to decompile (0–50000)", self.max_decompile_var, 3)
+        self._field(page, "Output reconstruction folder", self.output_var, 4, self._browse_reconstruction_output, "Browse")
+        tk.Label(
+            page,
+            text="The generated app is a reconstruction from observed UI and static-analysis evidence—not the original source code. Backend-only behavior may need authorized API evidence.",
+            justify="left", wraplength=1040, fg="#8399b5", bg="#0b1220",
+            font=("Segoe UI", 9), pady=10,
+        ).pack(anchor="w")
 
-        tk.Label(body, text="Ghidra install folder", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ghidra_row = tk.Frame(body, bg="#0b1220")
-        ghidra_row.pack(fill="x", pady=(3, 8))
-        ttk.Entry(ghidra_row, textvariable=self.ghidra_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(ghidra_row, text="Browse Ghidra", command=self._browse_ghidra).pack(side="left", padx=(8, 0))
+        # Standalone reverse-engineering page
+        page = self.analysis_page
+        tk.Label(page, text="Reverse engineer a binary, installed app, package, or source project",
+                 bg="#0b1220", fg="#f0f5ff", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        tk.Label(
+            page,
+            text="Choose a file or folder. Mimic detects the likely format and runs the available local analyzers. It does not launch the target application or send analysis data to a cloud AI service.",
+            justify="left", wraplength=1040, fg="#a9bad3", bg="#0b1220",
+            font=("Segoe UI", 10), pady=7,
+        ).pack(anchor="w")
 
-        tk.Label(body, text="Local Ollama coding model", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ttk.Entry(body, textvariable=self.model_var).pack(fill="x", pady=(3, 8))
+        self.analysis_target_var = tk.StringVar(value="")
+        self.analysis_output_var = tk.StringVar(value=str(Path.home() / "MimicProjects" / "Analyses" / "new-analysis"))
+        self.analysis_summary_var = tk.BooleanVar(value=True)
+        self._field(
+            page, "Target file or application folder", self.analysis_target_var, 0,
+            self._browse_analysis_file, "Browse File", extra_button=(self._browse_analysis_folder, "Browse Folder"),
+        )
+        self._field(
+            page, "Analysis results folder", self.analysis_output_var, 1,
+            self._browse_analysis_output, "Browse Output",
+        )
+        self._field(
+            page, "Ghidra installation folder (optional for non-native targets)", self.ghidra_var, 2,
+            self._browse_ghidra, "Browse Ghidra",
+        )
+        self._model_field(page, row=3, include_url=True)
+        self._field(page, "Maximum functions to decompile (0–50000)", self.max_decompile_var, 4)
+        tk.Checkbutton(
+            page,
+            text="Generate an evidence-based findings report with local Ollama after static analysis",
+            variable=self.analysis_summary_var,
+            bg="#0b1220", fg="#c5d1e5", selectcolor="#132238",
+            activebackground="#0b1220", activeforeground="#75e0d0",
+            font=("Segoe UI", 9), anchor="w",
+        ).pack(anchor="w", pady=(10, 7))
 
-        tk.Label(body, text="Ghidra max functions to decompile (0-50000)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ttk.Entry(body, textvariable=self.max_decompile_var).pack(fill="x", pady=(3, 8))
+        analysis_buttons = tk.Frame(page, bg="#0b1220")
+        analysis_buttons.pack(fill="x", pady=(5, 8))
+        self.analyze_button = ttk.Button(analysis_buttons, text="START ANALYSIS", command=self._start_analysis)
+        self.analyze_button.pack(side="left")
+        self.open_analysis_button = ttk.Button(analysis_buttons, text="OPEN RESULTS FOLDER", command=self._open_analysis_output)
+        self.open_analysis_button.pack(side="left", padx=(8, 0))
+        self.analysis_progress = ttk.Progressbar(page, mode="indeterminate", style="Horizontal.TProgressbar")
+        self.analysis_progress.pack(fill="x", pady=(7, 4))
+        self.analysis_progress.stop()
 
-        tk.Label(body, text="Output project folder", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ttk.Entry(body, textvariable=self.output_var).pack(fill="x", pady=(3, 8))
+        # Shared activity feed remains visible whichever workflow tab is selected.
+        status_bar = tk.Frame(self.root, bg="#132238", padx=18, pady=8)
+        status_bar.pack(fill="x", padx=18, pady=(0, 6))
+        self.status_var = tk.StringVar(value="Ready")
+        tk.Label(
+            status_bar, textvariable=self.status_var, fg="#75e0d0", bg="#132238",
+            font=("Segoe UI", 10, "bold"), wraplength=1080, justify="left",
+        ).pack(anchor="w")
 
-        self.status_var = tk.StringVar(value="Idle")
-        status_bar = tk.Frame(body, bg="#132238", padx=12, pady=9)
-        status_bar.pack(fill="x", pady=(2, 8))
-        tk.Label(status_bar, textvariable=self.status_var, fg="#75e0d0", bg="#132238",
-                 font=("Segoe UI", 10, "bold"), wraplength=930, justify="left").pack(anchor="w")
-
-        tk.Label(body, text="Activity", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        self.activity = tk.Text(body, height=9, bg="#080e18", fg="#c6d4e7", insertbackground="#ffffff",
-                                relief="flat", padx=12, pady=9, font=("Consolas", 9), wrap="word")
-        self.activity.pack(fill="both", expand=True, pady=(5, 0))
+        log_frame = tk.Frame(self.root, bg="#0b1220", padx=18, pady=(0, 8))
+        log_frame.pack(fill="both")
+        log_header = tk.Frame(log_frame, bg="#0b1220")
+        log_header.pack(fill="x")
+        tk.Label(log_header, text="ACTIVITY", fg="#c5d1e5", bg="#0b1220",
+                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        ttk.Button(log_header, text="Clear Log", command=self._clear_log).pack(side="right")
+        self.activity = tk.Text(
+            log_frame, height=7, bg="#080e18", fg="#c6d4e7", insertbackground="#ffffff",
+            relief="flat", padx=10, pady=7, font=("Consolas", 9), wrap="word",
+        )
+        self.activity.pack(fill="both", expand=True, pady=(4, 0))
         self.activity.configure(state="disabled")
 
-        footer = tk.Label(
+        tk.Label(
             self.root,
-            text="Local analysis • Ghidra static analysis • No global keylogging • Password/edit values omitted",
-            fg="#7f91aa", bg="#0b1220", font=("Segoe UI", 9), pady=8
-        )
-        footer.pack(fill="x")
+            text="Ollama runs locally • Tool availability is reported honestly • Only analyze software you own or are authorized to inspect",
+            fg="#7f91aa", bg="#0b1220", font=("Segoe UI", 9), pady=6,
+        ).pack(fill="x")
+
+    def _field(self, parent, label_text, variable, row, browse_callback=None, browse_label="Browse", extra_button=None):
+        wrap = tk.Frame(parent, bg="#0b1220")
+        wrap.pack(fill="x", pady=(4, 5))
+        tk.Label(wrap, text=label_text, fg="#d8e1f0", bg="#0b1220",
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        line = tk.Frame(wrap, bg="#0b1220")
+        line.pack(fill="x", pady=(3, 0))
+        ttk.Entry(line, textvariable=variable).pack(side="left", fill="x", expand=True)
+        if browse_callback:
+            ttk.Button(line, text=browse_label, command=browse_callback).pack(side="left", padx=(7, 0))
+        if extra_button:
+            callback, text = extra_button
+            ttk.Button(line, text=text, command=callback).pack(side="left", padx=(7, 0))
+
+    def _model_field(self, parent, row, include_url):
+        wrap = tk.Frame(parent, bg="#0b1220")
+        wrap.pack(fill="x", pady=(4, 5))
+        tk.Label(wrap, text="Local Ollama coding / analysis model", fg="#d8e1f0", bg="#0b1220",
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        line = tk.Frame(wrap, bg="#0b1220")
+        line.pack(fill="x", pady=(3, 0))
+        combo = ttk.Combobox(line, textvariable=self.model_var, values=[], state="normal")
+        combo.pack(side="left", fill="x", expand=True)
+        if not hasattr(self, "model_combos"):
+            self.model_combos = []
+        self.model_combos.append(combo)
+        ttk.Button(line, text="Refresh Models", command=self._refresh_models).pack(side="left", padx=(7, 0))
+        if include_url:
+            url_line = tk.Frame(wrap, bg="#0b1220")
+            url_line.pack(fill="x", pady=(6, 0))
+            tk.Label(url_line, text="Ollama server URL", fg="#a9bad3", bg="#0b1220",
+                     font=("Segoe UI", 9)).pack(side="left")
+            ttk.Entry(url_line, textvariable=self.ollama_url_var, width=40).pack(side="left", padx=(8, 0))
+
+    def _clear_log(self):
+        self.activity.configure(state="normal")
+        self.activity.delete("1.0", "end")
+        self.activity.configure(state="disabled")
+
+    def _refresh_models(self):
+        if self.busy:
+            return
+        from .ollama import Ollama
+        model = self.model_var.get().strip() or None
+        base_url = self.ollama_url_var.get().strip() or None
+
+        def worker():
+            try:
+                models = Ollama(base_url=base_url, model=model).models()
+                self.root.after(0, self._models_refreshed, models, None)
+            except Exception as exc:
+                self.root.after(0, self._models_refreshed, [], str(exc))
+
+        self._log("Connecting to the configured local Ollama server to list installed models…")
+        threading.Thread(target=worker, name="mimic-list-ollama-models", daemon=True).start()
+
+    def _models_refreshed(self, models, error):
+        for combo in getattr(self, "model_combos", []):
+            combo.configure(values=models)
+        if error:
+            self._log("Could not list Ollama models: " + error)
+            messagebox.showwarning("Ollama not reachable", error)
+        else:
+            self._log("Ollama models loaded: " + (", ".join(models) if models else "none installed"))
+            if models and self.model_var.get().strip() not in models:
+                preferred = next((name for name in models if "coder" in name.casefold()), models[0])
+                self.model_var.set(preferred)
+
+    def _browse_analysis_file(self):
+        path = filedialog.askopenfilename(title="Choose a target application or package",
+                                          filetypes=[("All files", "*.*")])
+        if path:
+            self.analysis_target_var.set(path)
+            self._suggest_analysis_output(path)
+
+    def _browse_analysis_folder(self):
+        path = filedialog.askdirectory(title="Choose an application installation or source folder")
+        if path:
+            self.analysis_target_var.set(path)
+            self._suggest_analysis_output(path)
+
+    def _suggest_analysis_output(self, target):
+        target_path = Path(target)
+        name = target_path.stem if target_path.is_file() else target_path.name
+        name = "".join(character if character.isalnum() or character in "-_ " else "_" for character in name).strip()
+        self.analysis_output_var.set(str(Path.home() / "MimicProjects" / "Analyses" / ((name or "app") + "-analysis")))
+
+    def _browse_analysis_output(self):
+        path = filedialog.askdirectory(title="Choose analysis results folder")
+        if path:
+            self.analysis_output_var.set(path)
+
+    def _browse_reconstruction_output(self):
+        path = filedialog.askdirectory(title="Choose desktop reconstruction output folder")
+        if path:
+            self.output_var.set(path)
+
+    def _open_analysis_output(self):
+        target = Path(self.analysis_output_var.get()).expanduser()
+        if not target.exists():
+            messagebox.showinfo("Results not created yet", "Run an analysis first. The results folder will appear here.")
+            return
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.Popen(["open", str(target)])
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", str(target)])
+        except Exception as exc:
+            messagebox.showerror("Could not open folder", str(exc))
+
+    def _start_analysis(self):
+        if self.busy:
+            messagebox.showinfo("Mimic is busy", "Wait for the current operation to finish.")
+            return
+        target = Path(self.analysis_target_var.get().strip().strip('"')).expanduser()
+        output = Path(self.analysis_output_var.get().strip().strip('"')).expanduser()
+        if not target.exists():
+            messagebox.showwarning("Choose a target", "Browse to an application file or folder first.")
+            return
+        if not str(output):
+            messagebox.showwarning("Choose an output folder", "Choose where the analysis reports should be saved.")
+            return
+        try:
+            max_decompile = max(0, min(50000, int(self.max_decompile_var.get().strip())))
+        except ValueError:
+            messagebox.showwarning("Invalid decompilation depth", "Enter an integer from 0 to 50000.")
+            return
+        use_summary = self.analysis_summary_var.get()
+        model = self.model_var.get().strip()
+        if use_summary and not model:
+            messagebox.showwarning("Model required", "Enter an installed Ollama model or turn off AI summary.")
+            return
+        try:
+            output.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror("Cannot create output folder", str(exc))
+            return
+
+        self.busy = True
+        self.analyze_button.configure(state="disabled")
+        self.build_button.configure(state="disabled")
+        self.arm_button.configure(state="disabled")
+        self.open_analysis_button.configure(state="disabled")
+        self.analysis_progress.start(12)
+        self._log("Starting format detection and local static analysis: " + str(target))
+        ghidra_home = self.ghidra_var.get().strip() or None
+        ollama_url = self.ollama_url_var.get().strip() or None
+
+        def worker():
+            report = None
+            summary_result = None
+            summary_error = None
+            error = None
+            try:
+                report = reverse_engineer(
+                    str(target), str(output), ghidra_home=ghidra_home,
+                    max_decompile=max_decompile, on_status=self._status_from_worker,
+                )
+                if report.get("analysis_error"):
+                    raise RuntimeError(report["analysis_error"])
+                if use_summary:
+                    self._status_from_worker("Static analysis saved. Ollama is preparing an evidence-based report…")
+                    try:
+                        summary_result = summarize_analysis_manifest(
+                            str(output / "mimic-analysis-manifest.json"), model=model, base_url=ollama_url,
+                        )
+                    except Exception as exc:
+                        summary_error = str(exc)
+            except Exception as exc:
+                error = str(exc)
+            try:
+                self.root.after(0, self._analysis_finished, report, summary_result, summary_error, error, output)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="mimic-format-analysis", daemon=True).start()
+
+    def _analysis_finished(self, report, summary_result, summary_error, error, output):
+        self.analysis_progress.stop()
+        self.busy = False
+        self.analyze_button.configure(state="normal")
+        self.open_analysis_button.configure(state="normal")
+        self.arm_button.configure(state="normal")
+        if error:
+            self._log("Analysis failed: " + error)
+            messagebox.showerror("Analysis failed", error)
+            return
+        detection = (report or {}).get("detection", {}).get("type", "unknown")
+        self._log("Static analysis complete. Detected type: " + detection)
+        self._log("Results saved to: " + str(output))
+        if summary_result:
+            self._log("Ollama report: " + summary_result["markdown"])
+        if summary_error:
+            self._log("Static analysis succeeded, but Ollama summary failed: " + summary_error)
+        warnings = (report or {}).get("warnings", [])
+        if warnings:
+            self._log("Warnings: " + " | ".join(str(item) for item in warnings[:8]))
+        if summary_error:
+            messagebox.showwarning(
+                "Analysis saved; AI report unavailable",
+                "The analysis artifacts were saved successfully, but Ollama could not finish the summary.\n\n"
+                + summary_error + "\n\nOpen the results folder to inspect the manifest and tool output."
+            )
+        else:
+            messagebox.showinfo(
+                "Analysis complete",
+                "Detected type: " + detection + "\n\nResults folder:\n" + str(output)
+                + ("\n\nAI findings:\n" + summary_result["markdown"] if summary_result else "")
+            )
 
     def _log(self, message):
         line = datetime.now().strftime("%H:%M:%S") + "  " + str(message)
