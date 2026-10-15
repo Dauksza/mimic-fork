@@ -25,8 +25,12 @@ class MimicWindowsApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MIMIC | Windows Reverse Engineering")
-        self.root.geometry("1160x1020")
-        self.root.minsize(950, 800)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        initial_width = min(1160, max(850, screen_width - 80))
+        initial_height = min(940, max(640, screen_height - 80))
+        self.root.geometry(f"{initial_width}x{initial_height}")
+        self.root.minsize(min(950, initial_width), min(680, initial_height))
         self.root.configure(bg="#0b1220")
         self.capture = None
         self.runtime_trace = None
@@ -72,10 +76,10 @@ class MimicWindowsApp:
         self.notebook = ttk.Notebook(workspace)
         self.notebook.pack(fill="both", expand=True)
 
-        self.capture_page = tk.Frame(self.notebook, bg="#0b1220", padx=20, pady=16)
-        self.analysis_page = tk.Frame(self.notebook, bg="#0b1220", padx=20, pady=16)
-        self.notebook.add(self.capture_page, text="Capture & Rebuild")
-        self.notebook.add(self.analysis_page, text="Analyze Any App")
+        self.capture_page, capture_tab = self._create_scrollable_page()
+        self.analysis_page, analysis_tab = self._create_scrollable_page()
+        self.notebook.add(capture_tab, text="Capture & Rebuild")
+        self.notebook.add(analysis_tab, text="Analyze Any App")
 
         # Capture & rebuild page
         page = self.capture_page
@@ -194,6 +198,52 @@ class MimicWindowsApp:
             text="Ollama runs locally • Tool availability is reported honestly • Only analyze software you own or are authorized to inspect",
             fg="#7f91aa", bg="#0b1220", font=("Segoe UI", 9), pady=6,
         ).pack(fill="x")
+
+    def _create_scrollable_page(self):
+        """Create a notebook tab whose contents remain reachable on shorter screens."""
+        container = tk.Frame(self.notebook, bg="#0b1220")
+        canvas = tk.Canvas(container, bg="#0b1220", highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        content = tk.Frame(canvas, bg="#0b1220", padx=20, pady=16)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+        content.bind(
+            "<Configure>",
+            lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(window_id, width=event.width),
+        )
+
+        def scroll(event):
+            number = getattr(event, "num", None)
+            if number == 4:
+                canvas.yview_scroll(-1, "units")
+            elif number == 5:
+                canvas.yview_scroll(1, "units")
+            else:
+                delta = getattr(event, "delta", 0)
+                if delta:
+                    units = int(-delta / 120)
+                    canvas.yview_scroll(units if units else (-1 if delta > 0 else 1), "units")
+
+        def enable_mousewheel(_event):
+            canvas.bind_all("<MouseWheel>", scroll)
+            canvas.bind_all("<Button-4>", scroll)
+            canvas.bind_all("<Button-5>", scroll)
+
+        def disable_mousewheel(_event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", enable_mousewheel)
+        canvas.bind("<Leave>", disable_mousewheel)
+        return content, container
 
     def _field(self, parent, label_text, variable, row, browse_callback=None, browse_label="Browse", extra_button=None):
         wrap = tk.Frame(parent, bg="#0b1220")
