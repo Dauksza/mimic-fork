@@ -16,8 +16,8 @@ IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp"}
 
 def _redact(value):
     if isinstance(value, str):
-        value = re.sub(r"(?i)bearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", value)
-        value = re.sub(r'(?i)("(?:access_?token|refresh_?token|password|passwd|secret|api_?key|cookie|session_?id)"\\s*:\\s*")[^"]*(")', r"\\1[REDACTED]\\2", value)
+        value = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", value)
+        value = re.sub(r'(?i)("(?:access_?token|refresh_?token|password|passwd|secret|api_?key|cookie|session_?id)"\s*:\s*")[^"]*(")', r"\1[REDACTED]\2", value)
         return value[:2500]
     return value
 
@@ -106,7 +106,7 @@ def reconstruct(host, endpoints, out, app_name=None, model=None, base_url=None, 
         if root not in dest.parents:
             raise OllamaError("Rejected unsafe generated path: " + name)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(body.rstrip() + "\\n", encoding="utf-8")
+        dest.write_text(body.rstrip() + "\n", encoding="utf-8")
     report = {
         "source_host": host,
         "model": client.model,
@@ -116,5 +116,5 @@ def reconstruct(host, endpoints, out, app_name=None, model=None, base_url=None, 
         "screenshots_used": [name for name, _ in screenshots],
         "note": "UI and workflows are inferred from captured evidence. Test against the original before production use.",
     }
-    (root / "mimic-report.json").write_text(json.dumps(report, indent=2) + "\\n", encoding="utf-8")
+    (root / "mimic-report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return sorted(list(files) + ["mimic-report.json"])
