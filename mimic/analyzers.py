@@ -919,3 +919,251 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
     manifest_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     report["manifest_path"] = str(manifest_path)
     return report
+
+
+
+def _redact_analysis_text(text, limit=4000):
+    text = str(text or "")
+    text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", text)
+    text = re.sub(r"(?i)((?:access_?token|refresh_?token|password|passwd|secret|api.?key|authorization|cookie|client_secret)\s*[:=]\s*)[^\s,;]+", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)(https?://[^/\s:]+/)[^ \t\r\n\"']+", r"\1[PATH_REDACTED]", text) if False else text
+    return text[:limit]
+
+
+def _compact_inventory(value, source_limit=10):
+    if not isinstance(value, dict):
+        return value
+    compact = {
+        key: value.get(key)
+        for key in ("file_count", "file_count_scanned", "report_path", "root")
+        if key in value
+    }
+    files = value.get("files")
+    if isinstance(files, list):
+        priority_terms = ("main", "app", "entry", "route", "view", "screen", "controller", "service", "api", "auth", "model", "database", "store", "network")
+        ranked = sorted(
+            files,
+            key=lambda item: (
+                not any(term in str(item.get("path", "")).casefold() for term in priority_terms),
+                len(item.get("classes", [])) + len(item.get("functions", [])),
+            ),
+            reverse=False,
+        )
+        compact["key_source_files"] = [
+            {
+                "path": item.get("path"),
+                "size": item.get("size"),
+                "line_count": item.get("line_count"),
+                "classes": item.get("classes", [])[:20],
+                "functions": item.get("functions", [])[:25],
+            }
+            for item in ranked[:60]
+        ]
+    samples = value.get("priority_source_samples")
+    if isinstance(samples, list):
+        compact["priority_source_samples"] = [
+            {"path": sample.get("path"), "content": _redact_analysis_text(sample.get("content"), 2200)}
+            for sample in samples[:source_limit]
+        ]
+    return compact
+
+
+def _compact_analysis(manifest):
+    detection = manifest.get("detection", {})
+    analysis = manifest.get("analysis", {})
+    compact: dict[str, Any] = {
+        "target_name": Path(str(manifest.get("target", "unknown"))).name,
+        "sha256": manifest.get("sha256"),
+        "detection": {
+            key: detection.get(key)
+            for key in ("type", "extension", "frameworks", "confidence", "runtime_signatures")
+            if key in detection
+        },
+        "warnings": manifest.get("warnings", [])[:30],
+        "analysis_elapsed_seconds": manifest.get("analysis_elapsed_seconds"),
+        "evidence": {},
+    }
+
+    def pull_ghidra(report, key_prefix=""):
+        if not isinstance(report, dict):
+            return None
+        return {
+            "module": report.get("program_name") or Path(str(report.get("analyzed_binary", ""))).name,
+            "language": report.get("language"),
+            "compiler": report.get("compiler"),
+            "function_count": report.get("function_count"),
+            "symbol_count": report.get("symbol_count"),
+            "external_symbol_count": report.get("external_symbol_count"),
+            "string_count": report.get("string_count"),
+            "reference_count": report.get("reference_count"),
+            "call_reference_count": report.get("call_reference_count"),
+            "decompiled_function_count": report.get("decompiled_function_count"),
+            "functions": [
+                {"name": item.get("name"), "address": item.get("address"),
+                 "parameter_count": item.get("parameter_count"), "size_bytes": item.get("size_bytes")}
+                for item in report.get("functions", [])[:100]
+            ],
+            "symbols": [
+                {"name": item.get("name"), "type": item.get("type"), "address": item.get("address")}
+                for item in report.get("symbols", [])[:50]
+            ],
+            "strings": [
+                {"value": _redact_analysis_text(item.get("value"), 220), "address": item.get("address")}
+                for item in report.get("strings", [])[:80]
+            ],
+            "decompiled_functions": [
+                {"name": item.get("name"), "address": item.get("address"),
+                 "code": _redact_analysis_text(item.get("code"), 1300)}
+                for item in report.get("decompiled_functions", [])[:8]
+            ],
+            "modules": report.get("modules", [])[:24],
+            "dependency_warnings": report.get("dependency_warnings", [])[:20],
+            "managed_decompilation": report.get("managed_decompilation", [])[:8],
+        }
+
+    if not isinstance(analysis, dict):
+        analysis = {}
+    for key in ("function_count", "symbol_count", "string_count", "call_reference_count",
+                "total_function_count", "total_symbol_count", "total_string_count", "total_call_reference_count"):
+        if key in analysis:
+            compact["evidence"][key] = analysis[key]
+    ghidra = pull_ghidra(analysis)
+    if ghidra and any(value is not None for key, value in ghidra.items() if key not in {"functions", "symbols", "strings"}):
+        compact["evidence"]["ghidra"] = ghidra
+    if "native_analysis" in analysis:
+        compact["evidence"]["native_analysis"] = pull_ghidra(analysis.get("native_analysis"))
+    modules = analysis.get("modules")
+    if isinstance(modules, list):
+        compact["evidence"]["modules"] = modules[:30]
+    for key in ("source_inventory", "resource_inventory"):
+        if key in analysis:
+            compact["evidence"][key] = _compact_inventory(analysis[key])
+    for key in ("tools", "manifest", "package_json", "bundle_identifier", "bundle_name",
+                "managed_decompilation", "payload_binaries_found", "executables_found",
+                "extracted_file_count", "package_files", "native_modules", "binary_reports",
+                "module_functions", "module_strings", "module_decompiled_functions"):
+        if key in analysis:
+            value = analysis[key]
+            if key == "tools" and isinstance(value, dict):
+                compact["evidence"][key] = {
+                    name: {k: v for k, v in item.items() if k not in {"stdout_excerpt", "stderr_excerpt"}}
+                    if isinstance(item, dict) else item
+                    for name, item in list(value.items())[:20]
+                }
+            elif key in {"package_files", "module_functions", "module_strings", "module_decompiled_functions"} and isinstance(value, list):
+                compact["evidence"][key] = value[:70]
+            elif key == "binary_reports" and isinstance(value, list):
+                compact["evidence"][key] = [
+                    {
+                        "analyzed_binary": item.get("analyzed_binary"),
+                        "total_function_count": item.get("total_function_count"),
+                        "total_symbol_count": item.get("total_symbol_count"),
+                        "total_string_count": item.get("total_string_count"),
+                        "modules": item.get("modules", [])[:10],
+                        "managed_decompilation": item.get("managed_decompilation", [])[:5],
+                    } for item in value[:12] if isinstance(item, dict)
+                ]
+            elif key == "native_modules" and isinstance(value, list):
+                compact["evidence"][key] = [
+                    {
+                        "program_name": item.get("program_name"),
+                        "function_count": item.get("function_count"),
+                        "symbol_count": item.get("symbol_count"),
+                        "string_count": item.get("string_count"),
+                        "decompiled_function_count": item.get("decompiled_function_count"),
+                        "status": item.get("status"),
+                        "error": item.get("error"),
+                    } for item in value[:16] if isinstance(item, dict)
+                ]
+            else:
+                text_value = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+                compact["evidence"][key] = _redact_analysis_text(text_value, 8000)
+    # Preserve a bounded set of native-module code excerpts without passing all artifacts at once.
+    decompiled = []
+    if isinstance(analysis.get("module_decompiled_functions"), list):
+        decompiled.extend(analysis["module_decompiled_functions"][:10])
+    if ghidra:
+        decompiled.extend(ghidra.get("decompiled_functions", [])[:8])
+    if decompiled:
+        compact["evidence"]["selected_decompilation"] = decompiled[:16]
+    return compact
+
+
+def summarize_analysis_manifest(manifest_path, model=None, base_url=None):
+    """Use local Ollama to create an evidence-grounded report without loading full artifacts."""
+    path = Path(manifest_path).expanduser().resolve()
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    compact = _compact_analysis(manifest)
+    client = Ollama(base_url=base_url, model=model)
+    available = client.models()
+    if client.model not in available:
+        raise OllamaError("Summary model is not installed: " + client.model + ". Run: ollama pull " + client.model)
+    prompt = (
+        "Analyze the supplied static-analysis and application-observation evidence. Produce a rigorous reverse-engineering report for software the user owns or is authorized to inspect. "
+        "Do not claim full source recovery, do not confuse symbol names or strings with verified behavior, do not assert a vulnerability without evidence, and separate observed facts from hypotheses. "
+        "Prefer concrete function names, UI frameworks, manifests, imports, storage clues, API/network libraries, and high-value next experiments. "
+        "Return JSON only with these keys: executive_summary (string), application_type (string), architecture (array of {component, evidence, confidence}), "
+        "entry_points (array of {name, evidence, confidence}), feature_map (array of {feature, evidence, confidence}), "
+        "network_and_ipc (array of {finding, evidence, confidence}), storage_and_config (array of {finding, evidence, confidence}), "
+        "security_observations (array of {finding, evidence, confidence}), high_value_functions (array of {name, reason, evidence}), "
+        "analysis_gaps (array of strings), next_experiments (array of strings), confidence (low|medium|high). "
+        "All claims must be tied to the supplied evidence. Keep arrays prioritized and do not pad them with generic guesses.\n\n"
+        "Evidence:\n" + json.dumps(compact, ensure_ascii=False)[:52000]
+    )
+    raw = client.chat(
+        [{"role": "system", "content": "You are a senior reverse engineer. Evidence-driven. Return well-formed JSON only."},
+         {"role": "user", "content": prompt}],
+        format="json", temperature=0.1, num_ctx=16384,
+    )
+    try:
+        summary = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise OllamaError("Ollama did not return valid JSON for the analysis summary.") from exc
+    if not isinstance(summary, dict) or not isinstance(summary.get("executive_summary"), str):
+        raise OllamaError("Ollama analysis summary is missing its executive_summary.")
+    output_dir = path.parent
+    json_path = output_dir / "ollama-analysis-summary.json"
+    json_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    md = [
+        "# Mimic Reverse-Engineering Report",
+        "",
+        "**Target:** " + str(compact.get("target_name")),
+        "**Detected type:** " + str(compact.get("detection", {}).get("type")),
+        "**Local model:** " + client.model,
+        "**Confidence:** " + str(summary.get("confidence", "unspecified")),
+        "",
+        "## Executive summary",
+        "",
+        summary["executive_summary"],
+    ]
+    for key, heading, field, value_field in [
+        ("architecture", "Architecture", "component", "evidence"),
+        ("entry_points", "Entry points", "name", "evidence"),
+        ("feature_map", "Observed or inferred feature map", "feature", "evidence"),
+        ("network_and_ipc", "Networking and inter-process communication", "finding", "evidence"),
+        ("storage_and_config", "Storage and configuration", "finding", "evidence"),
+        ("security_observations", "Security observations", "finding", "evidence"),
+        ("high_value_functions", "High-value functions", "name", "reason"),
+    ]:
+        values = summary.get(key, [])
+        md.extend(["", "## " + heading, ""])
+        if not values:
+            md.append("No evidence-grounded findings were returned.")
+        for item in values[:20] if isinstance(values, list) else []:
+            if isinstance(item, dict):
+                evidence_text = item.get(field, "")
+                explanation = item.get(value_field, "")
+                confidence = item.get("confidence", "")
+                md.append("- **" + str(evidence_text) + "** — " + str(explanation) + ((" _(confidence: " + str(confidence) + ")_") if confidence else ""))
+            else:
+                md.append("- " + str(item))
+    for key, heading in [("analysis_gaps", "Analysis gaps"), ("next_experiments", "Recommended next experiments")]:
+        md.extend(["", "## " + heading, ""])
+        values = summary.get(key, [])
+        if isinstance(values, list) and values:
+            md.extend("- " + str(item) for item in values[:30])
+        else:
+            md.append("None listed.")
+    markdown_path = output_dir / "ollama-analysis-summary.md"
+    markdown_path.write_text("\n".join(md).rstrip() + "\n", encoding="utf-8")
+    return {"json": str(json_path), "markdown": str(markdown_path), "summary": summary}
