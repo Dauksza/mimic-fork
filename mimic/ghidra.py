@@ -78,13 +78,17 @@ def _safe_project_name(path):
 
 
 def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=5400, max_decompile=350, per_function_timeout=12, on_status=None):
-    """Run real Ghidra analysis on an executable and its adjacent DLL dependencies."""
+    """Run Ghidra headless analysis on a PE, ELF, Mach-O, or raw native binary."""
     status = on_status or (lambda message: None)
     binary = Path(binary_path).expanduser().resolve()
     if not binary.is_file():
         raise GhidraError("The target executable does not exist: " + str(binary))
-    if binary.suffix.casefold() not in {".exe", ".dll", ".ocx", ".sys"}:
-        raise GhidraError("Ghidra target must be a PE executable or library (.exe, .dll, .ocx, .sys).")
+    if binary.suffix.casefold() not in {
+        ".exe", ".dll", ".ocx", ".sys", ".so", ".dylib", ".elf", ".o", ".a", ".bin", ".mach-o"
+    } and binary.suffix:
+        raise GhidraError(
+            "Ghidra target must be a supported native executable/library (PE, ELF, Mach-O, or raw binary)."
+        )
     home = find_ghidra_home(ghidra_home)
     if not home:
         raise GhidraError(
