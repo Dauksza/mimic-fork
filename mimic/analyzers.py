@@ -101,6 +101,10 @@ def detect_runtime(path):
         if list(target.glob("*.java")) or list(target.glob("*.kt")):
             facts["type"] = "jvm_project"
             return facts
+        if list(target.glob("*.cs")) or list(target.glob("*.csproj")) or list(target.glob("*.sln")):
+            facts["type"] = "dotnet_project"
+            facts["frameworks"].append(".NET")
+            return facts
         facts["type"] = "directory"
         facts["confidence"] = "low"
         return facts
@@ -118,8 +122,34 @@ def detect_runtime(path):
     if ext in {".appx", ".msix", ".msixbundle", ".appxbundle"}:
         facts["type"] = "windows_package"
         return facts
+    if ext in {".msi", ".msp", ".msm"}:
+        facts["type"] = "windows_installer"
+        return facts
+    if ext in {".csproj", ".sln"}:
+        facts["type"] = "dotnet_project"
+        facts["frameworks"].append(".NET")
+        return facts
     if ext == ".asar":
         facts["type"] = "electron"
+        return facts
+    if ext == ".zip":
+        try:
+            with zipfile.ZipFile(target) as archive:
+                names = {item.filename.replace("\\\\", "/").casefold() for item in archive.infolist()[:MAX_ARCHIVE_MEMBERS]}
+            if any(name.endswith("androidmanifest.xml") for name in names) and any("/classes" in name and name.endswith(".dex") for name in names):
+                facts["type"] = "android_package"
+                facts["frameworks"].append("Android/Dalvik")
+            elif any("/payload/" in name and name.endswith("/info.plist") for name in names):
+                facts["type"] = "apple_binary_or_package"
+                facts["frameworks"].append("iOS IPA-like archive")
+            elif any(name.endswith("app.asar") for name in names):
+                facts["type"] = "electron"
+                facts["frameworks"].append("Electron")
+            else:
+                facts["type"] = "source_archive"
+        except (zipfile.BadZipFile, OSError):
+            facts["type"] = "unknown"
+            facts["confidence"] = "low"
         return facts
     if ext in {".py", ".pyw", ".pyc", ".pyo", ".pyz"}:
         facts["type"] = "python"
@@ -131,7 +161,7 @@ def detect_runtime(path):
     if ext in PE_TYPES or ext in NATIVE_TYPES or not ext:
         signature = b""
         with target.open("rb") as stream:
-            signature = stream.read(4096)
+            signature = stream.read(65536)
         if b"PyInstaller" in signature or b"pyi-windows-manifest-filename" in signature:
             facts["frameworks"].append("PyInstaller")
         if b"MSIL" in signature or b".NET" in signature:
@@ -142,6 +172,11 @@ def detect_runtime(path):
             facts["frameworks"].append("Go (possible)")
         if b"Rust" in signature:
             facts["frameworks"].append("Rust (possible)")
+        if any(marker in signature for marker in (b"Inno Setup", b"Nullsoft Install System", b"InstallShield", b"WiX Toolset", b"Advanced Installer")):
+            facts["type"] = "windows_installer"
+            facts["frameworks"].append("Windows installer bundle")
+            facts["confidence"] = "medium"
+            return facts
         if ext in PE_TYPES:
             facts["type"] = "windows_binary"
             facts["confidence"] = "high"
