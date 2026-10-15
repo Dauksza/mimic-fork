@@ -1170,7 +1170,7 @@ def _compact_analysis(manifest):
         if key in analysis:
             compact["evidence"][key] = _compact_inventory(analysis[key])
     for key in ("tools", "manifest", "package_json", "bundle_identifier", "bundle_name",
-                "managed_decompilation", "payload_binaries_found", "executables_found",
+                "managed_decompilation", "ilspy_source_excerpt", "runtime_layout_markers", "payload_binaries_found", "executables_found",
                 "extracted_file_count", "package_files", "native_modules", "binary_reports",
                 "module_functions", "module_strings", "module_decompiled_functions"):
         if key in analysis:
@@ -1217,7 +1217,8 @@ def _compact_analysis(manifest):
                 ]
             else:
                 text_value = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
-                compact["evidence"][key] = _redact_analysis_text(text_value, 8000)
+                limit = 22000 if key == "ilspy_source_excerpt" else 8000
+                compact["evidence"][key] = _redact_analysis_text(text_value, limit)
     # Preserve a bounded set of native-module code excerpts without passing all artifacts at once.
     decompiled = []
     if isinstance(analysis.get("module_decompiled_functions"), list):
