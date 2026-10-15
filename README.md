@@ -53,10 +53,22 @@ Run format-aware static analysis without a desktop capture session:
 
 ```powershell
 python -m pip install -e ".[analysis]"
-mimic-analyze "C:/Program Files/Vendor/App/App.exe" --out ./app-analysis --ghidra-home "C:/Tools/ghidra_PUBLIC"
+mimic-analyze "C:/Program Files/Vendor/App/App.exe" --out ./app-analysis --ghidra-home "C:/Tools/ghidra_PUBLIC" --max-decompile 1000
 ```
 
 The command classifies the target format, records file hashes and tool availability, stores full tool output locally, and asks local Ollama for an evidence-grounded report. Use --no-summary to collect static artifacts without invoking Ollama.
+
+Ghidra analysis defaults to decompiling up to **1,000 functions per primary binary**. Raise it for deeper analysis or reduce it for quicker first-pass triage:
+
+```powershell
+# Deep pass (can take hours on large binaries)
+mimic-analyze "C:/Path/App.exe" --out ./deep-analysis --max-decompile 5000
+
+# Inventory-focused pass without decompiling functions
+mimic-analyze "C:/Path/App.exe" --out ./inventory --max-decompile 0 --no-summary
+```
+
+The cap is per primary binary; package adapters may divide the budget among bundled native modules to avoid spending the entire run on one library. Function inventories, symbols, references, strings, and dependency metadata are collected separately where the binary format and installed tools support them. Increasing the cap does not guarantee full decompilation: stripped, packed, obfuscated, encrypted, or unsupported binaries can still limit results.
 
 Examples:
 
