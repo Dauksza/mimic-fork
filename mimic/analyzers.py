@@ -882,6 +882,127 @@ def _analyze_source_archive(target, out_dir, ghidra_home, status, max_decompile=
     return report
 
 
+
+
+
+def _safe_extract_tar(archive_path, out_dir, *, max_members=20000, max_total=MAX_TOTAL_EXTRACT_BYTES):
+    """Extract regular source/config/binary files; never extract links or special files."""
+    destination = Path(out_dir).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    extracted = []
+    total = 0
+    count = 0
+    allowed = PACKAGE_MEMBER_SUFFIXES | {".txt", ".cfg", ".ini", ".properties"}
+    with tarfile.open(archive_path, mode="r:*") as archive:
+        for member in archive:
+            if count >= max_members:
+                break
+            if not member.isfile() or member.issym() or member.islnk() or member.size < 0 or member.size > MAX_MEMBER_BYTES:
+                continue
+            name = member.name.replace("\\", "/")
+            parts = Path(name).parts
+            if not name or name.startswith("/") or ".." in parts or Path(name).is_absolute():
+                continue
+            if Path(name).suffix.casefold() not in allowed and Path(name).name.casefold() not in {
+                "package.json", "pyproject.toml", "requirements.txt", "cargo.toml", "go.mod",
+                "pom.xml", "build.gradle", "build.gradle.kts", "appxmanifest.xml",
+            }:
+                continue
+            if total + member.size > max_total:
+                break
+            output = (destination / Path(*parts)).resolve()
+            if destination not in output.parents:
+                continue
+            stream = archive.extractfile(member)
+            if stream is None:
+                continue
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with stream, output.open("wb") as target:
+                shutil.copyfileobj(stream, target)
+            total += member.size
+            count += 1
+            extracted.append(str(output))
+    return extracted
+
+
+def _analyze_system_package(target, out_dir, ghidra_home, status, max_decompile=1000):
+    output = Path(out_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    path = Path(target).resolve()
+    suffix = path.suffix.casefold()
+    report = {"type": "system_package", "target": str(path), "tools": {}, "warnings": []}
+    extracted_root = output / "extracted"
+    archive_name = path.name.casefold()
+
+    if suffix in {".tar", ".tgz", ".tbz", ".txz"} or archive_name.endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
+        try:
+            files = _safe_extract_tar(path, extracted_root)
+            report["extracted_file_count"] = len(files)
+        except (tarfile.TarError, OSError, ReverseEngineeringError) as exc:
+            report["warnings"].append("Safe source-file extraction from tar failed: " + str(exc)[:400])
+            files = []
+    else:
+        command = None
+        tool_name = None
+        dpkg_deb = shutil.which("dpkg-deb") or shutil.which("dpkg-deb.exe")
+        unsquashfs = shutil.which("unsquashfs") or shutil.which("unsquashfs.exe")
+        pkgutil = shutil.which("pkgutil") or shutil.which("pkgutil.exe")
+        xar = shutil.which("xar") or shutil.which("xar.exe")
+        bsdtar = shutil.which("bsdtar") or shutil.which("bsdtar.exe")
+        seven_zip = shutil.which("7z") or shutil.which("7z.exe") or shutil.which("7zz") or shutil.which("7zz.exe")
+
+        if suffix == ".deb" and dpkg_deb:
+            tool_name, command = "dpkg-deb", [dpkg_deb, "-x", str(path), str(extracted_root)]
+        elif suffix == ".snap" and unsquashfs:
+            tool_name, command = "unsquashfs", [unsquashfs, "-d", str(extracted_root), str(path)]
+        elif suffix == ".pkg" and pkgutil and os.name == "darwin":
+            tool_name, command = "pkgutil", ["--expand-full", str(path), str(extracted_root)]
+        elif suffix == ".pkg" and xar:
+            tool_name, command = "xar", [xar, "-xf", str(path)]
+        elif bsdtar:
+            tool_name, command = "bsdtar", [bsdtar, "-xf", str(path), "-C", str(extracted_root)]
+        elif seven_zip:
+            tool_name, command = "7-Zip", [seven_zip, "x", str(path), "-o" + str(extracted_root), "-y"]
+
+        if command:
+            extracted_root.mkdir(parents=True, exist_ok=True)
+            status("Package extraction: using " + str(tool_name) + " without launching the target application…")
+            report["tools"]["extractor"] = _run_tool(command, output / "extractor.log", 2400, cwd=str(output))
+            if report["tools"]["extractor"].get("status") != "ok":
+                report["warnings"].append("The selected package extractor failed; review extractor.log.")
+        else:
+            report["warnings"].append(
+                "No compatible local package extractor was found. Install dpkg-deb for Debian packages, unsquashfs for Snap, pkgutil/xar for macOS PKG, or bsdtar/7-Zip for supported containers."
+            )
+        files = []
+        if extracted_root.is_dir():
+            files = [str(p) for p in extracted_root.rglob("*") if p.is_file() and not p.is_symlink()][:MAX_ARCHIVE_MEMBERS]
+        report["extracted_file_count"] = len(files)
+
+    if extracted_root.is_dir():
+        report["source_inventory"] = _source_inventory(extracted_root, max_files=20000)
+        binaries = [
+            Path(name) for name in files
+            if Path(name).suffix.casefold() in {".exe", ".dll", ".ocx", ".sys", ".so", ".dylib", ".elf", ".bin"}
+        ][:24]
+        report["payload_binaries_found"] = len(binaries)
+        report["binary_reports"] = []
+        if binaries and find_ghidra_home(ghidra_home):
+            for index, binary in enumerate(binaries):
+                try:
+                    report["binary_reports"].append(analyze_binary(
+                        str(binary), str(output / "binary-analysis" / (str(index).zfill(2) + "_" + binary.stem[:55])),
+                        ghidra_home=ghidra_home,
+                        max_decompile=max(40, min(300, max_decompile // max(1, min(len(binaries), 24)))),
+                        on_status=status,
+                    ))
+                except GhidraError as exc:
+                    report["warnings"].append("Native analysis failed for " + binary.name + ": " + str(exc)[:250])
+        elif binaries:
+            report["warnings"].append("Payload binaries were cataloged but Ghidra is not installed/configured.")
+    return report
+
+
 def _analyze_installer(target, out_dir, ghidra_home, status, max_decompile=1000):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -1038,6 +1159,8 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, max_decompile=1000, o
             report["analysis"] = _analyze_source_archive(target_path, output / "archive-analysis", ghidra_home, status, max_decompile=max_decompile)
         elif detection["type"] == "windows_installer":
             report["analysis"] = _analyze_installer(target_path, output / "installer-analysis", ghidra_home, status, max_decompile=max_decompile)
+        elif detection["type"] == "system_package":
+            report["analysis"] = _analyze_system_package(target_path, output / "system-package-analysis", ghidra_home, status, max_decompile=max_decompile)
         elif detection["type"] == "windows_package":
             extracted = _safe_extract_members(
                 target_path, output / "package-extracted",
