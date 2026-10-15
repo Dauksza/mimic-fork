@@ -2,7 +2,7 @@
 name = "mimic-client"
 version = "0.1.0"
 description = "Capture app traffic and reconstruct authorized web apps locally with Ollama."
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Divy Srivastava", email = "me@littledivy.com" }]
