@@ -153,6 +153,37 @@ hook(['WININET.dll'], 'InternetConnectW', function(args) {
   const port = args[2].toInt32() & 0xffff;
   if (host) record('network_destination', {api: 'InternetConnectW', host: host, port: port});
 });
+// Winsock destination metadata captures apps that bypass WinHTTP/WinINet.
+hook(['ws2_32.dll', 'WS2_32.dll'], 'getaddrinfo', function(args) {
+  const host = readAnsi(args[0]);
+  const service = readAnsi(args[1]);
+  if (host || service) record('network_lookup', {api: 'getaddrinfo', host: host, service: service});
+});
+hook(['ws2_32.dll', 'WS2_32.dll'], 'GetAddrInfoW', function(args) {
+  const host = readWide(args[0]);
+  const service = readWide(args[1]);
+  if (host || service) record('network_lookup', {api: 'GetAddrInfoW', host: host, service: service});
+});
+hook(['ws2_32.dll', 'WS2_32.dll'], 'connect', function(args) {
+  try {
+    const address = args[1];
+    if (address.isNull()) return;
+    const family = address.readU16();
+    const port = ((address.add(2).readU8() & 0xff) << 8) | (address.add(3).readU8() & 0xff);
+    if (family === 2) {
+      const ip = [4, 5, 6, 7].map(function(offset) {
+        return address.add(offset).readU8() & 0xff;
+      }).join('.');
+      record('network_destination', {api: 'connect', host: ip, port: port, address_family: 'IPv4'});
+    } else if (family === 23) {
+      const bytes = [];
+      for (let i = 0; i < 16; i++) bytes.push((address.add(8 + i).readU8() & 0xff).toString(16).padStart(2, '0'));
+      const groups = [];
+      for (let i = 0; i < 16; i += 2) groups.push(bytes[i] + bytes[i + 1]);
+      record('network_destination', {api: 'connect', host: groups.join(':'), port: port, address_family: 'IPv6'});
+    }
+  } catch (_) {}
+});
 hook(winModules, 'CreateProcessW', function(args) {
   const application = readWide(args[0]);
   // Deliberately do not read lpCommandLine; it can include passwords or tokens.
