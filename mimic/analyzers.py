@@ -383,7 +383,7 @@ def _run_apktool(target, output, timeout=2400):
     return result
 
 
-def _analyze_archive_native(archive_path, out_dir, ghidra_home, status, max_modules=8):
+def _analyze_archive_native(archive_path, out_dir, ghidra_home, status, max_modules=8, max_decompile=600):
     extracted_dir = Path(out_dir) / "native-libraries"
     extracted = _safe_extract_members(
         archive_path, extracted_dir,
@@ -400,7 +400,7 @@ def _analyze_archive_native(archive_path, out_dir, ghidra_home, status, max_modu
                 status("Ghidra native module " + str(index + 1) + "/" + str(len(extracted)) + ": " + binary.name)
             results.append(analyze_binary(
                 str(binary), str(directory), ghidra_home=ghidra_home,
-                timeout=1800, max_decompile=80, per_function_timeout=8, on_status=status,
+                timeout=2400, max_decompile=max(40, min(250, max_decompile // max(1, min(max_modules, 8)))), per_function_timeout=8, on_status=status,
             ))
         except GhidraError as exc:
             results.append({"analyzed_binary": str(binary), "status": "error", "error": str(exc)})
@@ -420,7 +420,7 @@ def _read_manifest_xml(path):
         return {"path": str(path), "parse_status": "unavailable"}
 
 
-def _analyze_android(target, out_dir, ghidra_home, status):
+def _analyze_android(target, out_dir, ghidra_home, status, max_decompile=600):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     inventory = _archive_inventory(target)
@@ -438,12 +438,12 @@ def _analyze_android(target, out_dir, ghidra_home, status):
     report["tools"]["apktool"] = _run_apktool(target, output / "apktool-output")
     if target.suffix.casefold() in {".apk", ".xapk", ".apkm"}:
         try:
-            report["native_modules"] = _analyze_archive_native(target, output, ghidra_home, status)
+            report["native_modules"] = _analyze_archive_native(target, output, ghidra_home, status, max_decompile=max_decompile)
         except (zipfile.BadZipFile, ReverseEngineeringError, OSError) as exc:
             report["warnings"].append("Could not extract native libraries: " + str(exc))
     elif target.suffix.casefold() in {".aab", ".aar"}:
         try:
-            report["native_modules"] = _analyze_archive_native(target, output, ghidra_home, status, max_modules=4)
+            report["native_modules"] = _analyze_archive_native(target, output, ghidra_home, status, max_modules=4, max_decompile=max_decompile)
         except (zipfile.BadZipFile, ReverseEngineeringError, OSError) as exc:
             report["warnings"].append("Could not extract native libraries: " + str(exc))
     decoded = output / "apktool-output" / "AndroidManifest.xml"
@@ -452,7 +452,7 @@ def _analyze_android(target, out_dir, ghidra_home, status):
     return report
 
 
-def _analyze_apple(target, out_dir, ghidra_home, status):
+def _analyze_apple(target, out_dir, ghidra_home, status, max_decompile=600):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {"type": "apple_package", "target": str(target), "warnings": []}
@@ -521,7 +521,7 @@ def _analyze_apple(target, out_dir, ghidra_home, status):
                 try:
                     native_reports.append(analyze_binary(
                         str(binary), str(output / "ghidra-frameworks" / f"{index:02d}_{binary.stem[:50]}"),
-                        ghidra_home=ghidra_home, max_decompile=100, on_status=status,
+                        ghidra_home=ghidra_home, max_decompile=max(40, min(200, max_decompile // max(1, min(len(native_binaries), 12)))), on_status=status,
                     ))
                 except GhidraError as exc:
                     report["warnings"].append("Framework binary analysis failed for " + binary.name + ": " + str(exc)[:200])
@@ -567,7 +567,7 @@ def _analyze_apple(target, out_dir, ghidra_home, status):
             for index, binary in enumerate(dylibs):
                 try:
                     result = analyze_binary(str(binary), str(output / "ghidra-frameworks" / f"{index:02d}_{binary.stem[:50]}"),
-                                            ghidra_home=ghidra_home, max_decompile=75, on_status=status)
+                                            ghidra_home=ghidra_home, max_decompile=max(40, min(150, max_decompile // max(1, min(len(dylibs), 12)))), on_status=status)
                     report["framework_analyses"].append({
                         "binary": str(binary), "function_count": result.get("function_count"),
                         "string_count": result.get("string_count"),
@@ -817,7 +817,7 @@ def _analyze_source(target, out_dir):
 
 
 
-def _analyze_source_archive(target, out_dir, ghidra_home, status):
+def _analyze_source_archive(target, out_dir, ghidra_home, status, max_decompile=600):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     inventory = _archive_inventory(target)
@@ -856,7 +856,7 @@ def _analyze_source_archive(target, out_dir, ghidra_home, status):
             try:
                 reports.append(analyze_application(
                     str(binary), str(output / "binary-analysis" / f"{index:02d}_{binary.stem[:60]}"),
-                    ghidra_home=ghidra_home, max_modules=4, max_decompile=100, on_status=status,
+                    ghidra_home=ghidra_home, max_modules=4, max_decompile=max(40, min(200, max_decompile // max(1, min(len(binaries), 8)))), on_status=status,
                 ))
             except GhidraError as exc:
                 report["warnings"].append(str(exc))
@@ -866,7 +866,7 @@ def _analyze_source_archive(target, out_dir, ghidra_home, status):
     return report
 
 
-def _analyze_installer(target, out_dir, ghidra_home, status):
+def _analyze_installer(target, out_dir, ghidra_home, status, max_decompile=600):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     target_path = Path(target).resolve()
@@ -907,7 +907,7 @@ def _analyze_installer(target, out_dir, ghidra_home, status):
             try:
                 reports.append(analyze_application(
                     str(binary), str(output / "binary-analysis" / f"{index:02d}_{binary.stem[:55]}"),
-                    ghidra_home=ghidra_home, max_modules=3, max_decompile=80, on_status=status,
+                    ghidra_home=ghidra_home, max_modules=3, max_decompile=max(40, min(160, max_decompile // max(1, min(len(binaries), 12)))), on_status=status,
                 ))
             except GhidraError as exc:
                 report["warnings"].append(str(exc))
@@ -916,7 +916,7 @@ def _analyze_installer(target, out_dir, ghidra_home, status):
     return report
 
 
-def _analyze_windows_folder(target, out_dir, ghidra_home, status):
+def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=600):
     root = Path(target).resolve()
     output = Path(out_dir).resolve()
     report = {
@@ -937,7 +937,7 @@ def _analyze_windows_folder(target, out_dir, ghidra_home, status):
         try:
             report["binary_reports"].append(analyze_application(
                 str(binary), str(output / "binaries" / f"{index:02d}_{binary.stem[:60]}"),
-                ghidra_home=ghidra_home, max_modules=6, max_decompile=150, on_status=status,
+                ghidra_home=ghidra_home, max_modules=6, max_decompile=max(50, min(250, max_decompile // max(1, min(len(executables), 10)))), on_status=status,
             ))
         except GhidraError as exc:
             report["warnings"].append("Analysis of " + str(binary) + " failed: " + str(exc)[:350])
@@ -945,7 +945,7 @@ def _analyze_windows_folder(target, out_dir, ghidra_home, status):
     return report
 
 
-def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
+def reverse_engineer(target, out_dir, *, ghidra_home=None, max_decompile=600, on_status=None):
     """Choose local analyzers for common desktop/mobile/archive/source formats."""
     status = on_status or (lambda message: None)
     start = time.monotonic()
@@ -975,7 +975,7 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
     try:
         if detection["type"] in {"windows_binary"}:
             report["analysis"] = analyze_application(str(target_path), str(output / "native-analysis"),
-                                                     ghidra_home=ghidra_home, on_status=status)
+                                                     ghidra_home=ghidra_home, max_decompile=max_decompile, on_status=status)
             # Detect and analyze Electron resources colocated with the executable.
             if _find_asar(target_path):
                 report["analysis"]["electron"] = _analyze_electron(target_path, output / "electron-analysis", status)
@@ -983,7 +983,7 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
             report["analysis"] = {
                 "native_analysis": analyze_binary(
                     str(target_path), str(output / "native-analysis"),
-                    ghidra_home=ghidra_home, max_decompile=350, on_status=status,
+                    ghidra_home=ghidra_home, max_decompile=max_decompile, on_status=status,
                 )
             }
         elif detection["type"] == "python_frozen":
@@ -992,16 +992,16 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
                 try:
                     report["analysis"]["native_analysis"] = analyze_application(
                         str(target_path), str(output / "native-analysis"), ghidra_home=ghidra_home,
-                        max_modules=8, max_decompile=150, on_status=status,
+                        max_modules=8, max_decompile=max_decompile, on_status=status,
                     )
                 except GhidraError as exc:
                     report["warnings"].append("Native container analysis failed: " + str(exc))
         elif detection["type"] == "android_package":
-            report["analysis"] = _analyze_android(target_path, output / "android-analysis", ghidra_home, status)
+            report["analysis"] = _analyze_android(target_path, output / "android-analysis", ghidra_home, status, max_decompile=max_decompile)
         elif detection["type"] == "jvm_bytecode":
             report["analysis"] = _analyze_jvm(target_path, output / "jvm-analysis", status)
         elif detection["type"] == "apple_binary_or_package":
-            report["analysis"] = _analyze_apple(target_path, output / "apple-analysis", ghidra_home, status)
+            report["analysis"] = _analyze_apple(target_path, output / "apple-analysis", ghidra_home, status, max_decompile=max_decompile)
         elif detection["type"] == "electron":
             report["analysis"] = _analyze_electron(target_path, output / "electron-analysis", status)
         elif detection["type"] in {"javascript_project", "python_project", "jvm_project", "dotnet_project", "directory"}:
@@ -1017,11 +1017,11 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
         elif detection["type"] in {"wasm_binary", "wasm_text"}:
             report["analysis"] = _analyze_wasm(target_path, output / "wasm-analysis")
         elif detection["type"] == "windows_application_folder":
-            report["analysis"] = _analyze_windows_folder(target_path, output / "folder-analysis", ghidra_home, status)
+            report["analysis"] = _analyze_windows_folder(target_path, output / "folder-analysis", ghidra_home, status, max_decompile=max_decompile)
         elif detection["type"] == "source_archive":
-            report["analysis"] = _analyze_source_archive(target_path, output / "archive-analysis", ghidra_home, status)
+            report["analysis"] = _analyze_source_archive(target_path, output / "archive-analysis", ghidra_home, status, max_decompile=max_decompile)
         elif detection["type"] == "windows_installer":
-            report["analysis"] = _analyze_installer(target_path, output / "installer-analysis", ghidra_home, status)
+            report["analysis"] = _analyze_installer(target_path, output / "installer-analysis", ghidra_home, status, max_decompile=max_decompile)
         elif detection["type"] == "windows_package":
             extracted = _safe_extract_members(
                 target_path, output / "package-extracted",
@@ -1035,7 +1035,7 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
                 try:
                     report["analysis"].setdefault("binary_reports", []).append(analyze_application(
                         binary, str(output / "package-binaries" / f"{index:02d}_{Path(binary).stem[:50]}"),
-                        ghidra_home=ghidra_home, max_modules=4, max_decompile=100, on_status=status,
+                        ghidra_home=ghidra_home, max_modules=4, max_decompile=max(40, min(180, max_decompile // max(1, min(len(binaries), 16)))), on_status=status,
                     ))
                 except GhidraError as exc:
                     report["warnings"].append(str(exc))
