@@ -11,7 +11,7 @@ echo This installs Mimic's Python dependencies into a private .venv folder.
 echo Ghidra, JADX, Apktool and other specialist analyzers are separate optional tools.
 echo.
 
-if exist ".venv\Scripts\python.exe" goto InstallPackages
+if exist ".venv\Scripts\python.exe" goto CheckPython
 
 where py >nul 2>nul
 if not errorlevel 1 (
