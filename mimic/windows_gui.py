@@ -36,6 +36,7 @@ class MimicWindowsApp:
         self.capture_dir = None
         self.busy = False
         self.model_var = tk.StringVar(value=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"))
+        self.max_decompile_var = tk.StringVar(value=os.environ.get("MIMIC_GHIDRA_MAX_DECOMPILE", "1000"))
         self.output_var = tk.StringVar(value=str(Path.home() / "MimicProjects" / "Reconstructions" / "desktop-clone"))
         self.ghidra_var = tk.StringVar(value=str(find_ghidra_home() or os.environ.get("GHIDRA_HOME", "")))
         self.binary_var = tk.StringVar(value="")
@@ -102,6 +103,9 @@ class MimicWindowsApp:
 
         tk.Label(body, text="Local Ollama coding model", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         ttk.Entry(body, textvariable=self.model_var).pack(fill="x", pady=(3, 8))
+
+        tk.Label(body, text="Ghidra max functions to decompile (0-5000)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Entry(body, textvariable=self.max_decompile_var).pack(fill="x", pady=(3, 8))
 
         tk.Label(body, text="Output project folder", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         ttk.Entry(body, textvariable=self.output_var).pack(fill="x", pady=(3, 8))
@@ -263,6 +267,11 @@ class MimicWindowsApp:
             return
         model = self.model_var.get().strip()
         output = Path(self.output_var.get()).expanduser()
+        try:
+            max_decompile = max(0, min(5000, int(self.max_decompile_var.get().strip())))
+        except ValueError:
+            messagebox.showwarning("Invalid decompilation depth", "Enter an integer from 0 to 5000.")
+            return
         if not model:
             messagebox.showwarning("Model required", "Enter an installed local Ollama model name.")
             return
@@ -291,6 +300,7 @@ class MimicWindowsApp:
                 reverse_dir = capture_dir / "reverse-engineering"
                 report = reverse_engineer(
                     binary, str(reverse_dir), ghidra_home=ghidra_home,
+                    max_decompile=max_decompile,
                     on_status=self._status_from_worker,
                 )
                 if report.get("analysis_error"):
