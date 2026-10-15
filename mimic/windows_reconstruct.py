@@ -116,7 +116,7 @@ def parse_project(raw):
     return files
 
 
-def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b", base_url=None):
+def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b", base_url=None, static_report=None):
     root, metadata, states, screenshots = read_session(session_dir)
     client = Ollama(base_url=base_url, model=model)
     available = client.models()
@@ -124,6 +124,31 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
         raise OllamaError("Code model is not installed: " + client.model + ". Run: ollama pull " + client.model)
 
     notes, visual_spec = [], ""
+    ghidra_spec = {}
+    if static_report:
+        report_path = Path(static_report).expanduser().resolve()
+        if not report_path.is_file():
+            raise ValueError("Ghidra report does not exist: " + str(report_path))
+        try:
+            raw_report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("Ghidra report is invalid JSON: " + str(report_path)) from exc
+        ghidra_spec = {
+            "program_name": safe_text(raw_report.get("program_name", ""), 160),
+            "language": raw_report.get("language"),
+            "compiler": raw_report.get("compiler"),
+            "function_count": raw_report.get("function_count"),
+            "functions": raw_report.get("functions", [])[:160],
+            "symbols": raw_report.get("symbols", [])[:120],
+            "strings": raw_report.get("strings", [])[:220],
+            "decompiled_functions": [
+                {"name": safe_text(fn.get("name", ""), 160),
+                 "address": fn.get("address"),
+                 "code": safe_text(fn.get("code", ""), 1700)}
+                for fn in raw_report.get("decompiled_functions", [])[:10]
+            ],
+        }
+        notes.append("Ghidra static reverse engineering imported: " + str(ghidra_spec.get("function_count", 0)) + " functions found.")
     vision_client = Ollama(base_url=base_url, model=vision_model)
     vision_available = vision_client.models()
     if screenshots and supports_vision(vision_client, vision_model, vision_available):
@@ -156,7 +181,9 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
         + "Capture times: " + str(metadata.get("started_at")) + " / " + str(metadata.get("ended_at")) + "\n"
         + "Window process ID: " + str(metadata.get("target_pid")) + "\n"
         + "Observed UI Automation states (sampled):\n" + json.dumps(states, ensure_ascii=False)[:70000] + "\n"
-        + "Visual analysis notes from local vision model:\n" + visual_spec[:18000]
+        + "Visual analysis notes from local vision model:\n" + visual_spec[:18000] + "\n"
+        + "Ghidra static reverse-engineering evidence (function inventory, symbols, strings, selected decompilation):\n"
+        + json.dumps(ghidra_spec, ensure_ascii=False)[:36000]
     )
     raw = client.chat(
         [{"role": "system", "content": "You are a senior native Windows UI reconstruction engineer. Return strictly valid JSON source files, no Markdown."},
@@ -195,6 +222,8 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
         "sampled_states": len(states),
         "screenshots_seen": len(screenshots),
         "visual_analysis_used": bool(visual_spec),
+        "ghidra_static_analysis_used": bool(ghidra_spec),
+        "ghidra_function_count": ghidra_spec.get("function_count"),
         "limitations": [
             "This recreates visible UI and inferred workflows; it does not recover original private source code or proprietary internal logic.",
             "Backend-dependent operations need authorized API evidence or an implementation of their own.",
