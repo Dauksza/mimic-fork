@@ -170,3 +170,38 @@ def test_safe_tar_extraction_skips_traversal_links_and_non_source_data(tmp_path)
     assert Path(files[0]).read_text(encoding="utf-8") == "def valid_source(): return True\n"
     assert not (tmp_path / "outside.py").exists()
     assert not (output / "src" / "linked.py").exists()
+
+
+def test_runtime_trace_script_covers_winsock_destinations_without_payload_capture():
+    from mimic.runtime_trace import FRIDA_SCRIPT
+
+    assert "'getaddrinfo'" in FRIDA_SCRIPT
+    assert "'GetAddrInfoW'" in FRIDA_SCRIPT
+    assert "'connect'" in FRIDA_SCRIPT
+    assert "network_destination" in FRIDA_SCRIPT
+    assert "network_lookup" in FRIDA_SCRIPT
+    # Runtime tracing must stay metadata-only: no socket payload or keystroke hooks.
+    assert "sendto" not in FRIDA_SCRIPT
+    assert "recvfrom" not in FRIDA_SCRIPT
+    assert "GetAsyncKeyState" not in FRIDA_SCRIPT
+
+
+def test_compact_analysis_preserves_managed_decompilation_evidence():
+    manifest = {
+        "target": "app.exe",
+        "detection": {"type": "windows_binary"},
+        "analysis": {
+            "tools": {
+                "ilspy": {
+                    "status": "ok",
+                    "ilspy_source_excerpt": "public class App { public void Start() {} }",
+                    "runtime_layout_markers": ["hostfxr.dll"],
+                }
+            }
+        },
+        "warnings": [],
+    }
+    compact = _compact_analysis(manifest)
+    assert "ilspy_source_excerpt" in compact["evidence"]
+    assert "public class App" in compact["evidence"]["ilspy_source_excerpt"]
+    assert "hostfxr.dll" in compact["evidence"]["runtime_layout_markers"]
