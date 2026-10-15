@@ -104,7 +104,7 @@ class MimicWindowsApp:
         tk.Label(body, text="Local Ollama coding model", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         ttk.Entry(body, textvariable=self.model_var).pack(fill="x", pady=(3, 8))
 
-        tk.Label(body, text="Ghidra max functions to decompile (0-5000)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(body, text="Ghidra max functions to decompile (0-50000)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         ttk.Entry(body, textvariable=self.max_decompile_var).pack(fill="x", pady=(3, 8))
 
         tk.Label(body, text="Output project folder", font=("Segoe UI", 10, "bold")).pack(anchor="w")
@@ -268,9 +268,9 @@ class MimicWindowsApp:
         model = self.model_var.get().strip()
         output = Path(self.output_var.get()).expanduser()
         try:
-            max_decompile = max(0, min(5000, int(self.max_decompile_var.get().strip())))
+            max_decompile = max(0, min(50000, int(self.max_decompile_var.get().strip())))
         except ValueError:
-            messagebox.showwarning("Invalid decompilation depth", "Enter an integer from 0 to 5000.")
+            messagebox.showwarning("Invalid decompilation depth", "Enter an integer from 0 to 50000.")
             return
         if not model:
             messagebox.showwarning("Model required", "Enter an installed local Ollama model name.")
