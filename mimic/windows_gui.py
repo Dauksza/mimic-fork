@@ -313,6 +313,12 @@ class MimicWindowsApp:
         if self.busy:
             messagebox.showinfo("Mimic is busy", "Wait for the current operation to finish.")
             return
+        if self.capture or self.discovery:
+            messagebox.showwarning(
+                "Capture is active",
+                "Stop the current UI capture before starting a separate static analysis job.",
+            )
+            return
         target = Path(self.analysis_target_var.get().strip().strip('"')).expanduser()
         output = Path(self.analysis_output_var.get().strip().strip('"')).expanduser()
         if not target.exists():
