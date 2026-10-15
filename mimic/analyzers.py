@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import zipfile
 from pathlib import Path
@@ -28,6 +29,8 @@ APPLE_TYPES = {".ipa", ".dylib", ".framework", ".bundle"}
 PE_TYPES = {".exe", ".dll", ".ocx", ".sys"}
 NATIVE_TYPES = {".so", ".dylib", ".elf", ".o", ".a", ".bin", ".mach-o"}
 WASM_TYPES = {".wasm", ".wat"}
+SYSTEM_PACKAGE_TYPES = {".deb", ".rpm", ".appimage", ".flatpak", ".snap", ".dmg", ".pkg", ".tar", ".tgz", ".tbz", ".txz"}
+PACKAGE_MEMBER_SUFFIXES = {".py", ".pyw", ".pyc", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".html", ".css", ".json", ".xml", ".plist", ".java", ".kt", ".cs", ".cpp", ".c", ".h", ".hpp", ".go", ".rs", ".swift", ".dart", ".sql", ".ps1", ".bat", ".sh", ".toml", ".yaml", ".yml", ".so", ".dylib", ".dll", ".exe", ".jar", ".wasm", ".config", ".manifest", ".md", ".properties"}
 JS_TYPES = {".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".html", ".css", ".map"}
 MAX_ARCHIVE_MEMBERS = 100_000
 MAX_MEMBER_BYTES = 1_500_000_000
@@ -126,6 +129,13 @@ def detect_runtime(path):
         return facts
     if ext in {".msi", ".msp", ".msm"}:
         facts["type"] = "windows_installer"
+        return facts
+    if ext in SYSTEM_PACKAGE_TYPES or target.name.casefold().endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
+        facts["type"] = "system_package"
+        if ext in {".dmg", ".pkg"}:
+            facts["frameworks"].append("macOS installer/container")
+        elif ext in {".deb", ".rpm", ".appimage", ".flatpak", ".snap"}:
+            facts["frameworks"].append("Linux package")
         return facts
     if ext in {".csproj", ".sln"}:
         facts["type"] = "dotnet_project"
