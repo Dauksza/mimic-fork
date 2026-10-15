@@ -116,6 +116,41 @@ def parse_project(raw):
     return files
 
 
+
+def read_runtime_events(session_root, limit=300):
+    path = Path(session_root) / "runtime-events.jsonl"
+    if not path.is_file():
+        return []
+    rows = []
+    sensitive_terms = ("password", "passwd", "token", "secret", "api_key", "authorization", "cookie")
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event = {key: item.get(key) for key in (
+            "type", "timestamp", "name", "module", "path", "source", "destination",
+            "subkey", "host", "port", "api", "application", "architecture", "platform",
+            "state", "description",
+        ) if key in item}
+        for key, value in list(event.items()):
+            if isinstance(value, str):
+                event[key] = safe_text(value, 320)
+        if any(term in json.dumps(event).casefold() for term in sensitive_terms):
+            event = {key: value for key, value in event.items() if key not in {"path", "source", "destination", "subkey", "application"}}
+        if event:
+            rows.append(event)
+    interesting = [row for row in rows if row.get("type") in {
+        "module_load", "file_open_attempt", "file_delete_attempt", "file_move_attempt",
+        "file_copy_attempt", "registry_open_attempt", "registry_create_attempt",
+        "network_destination", "process_launch_attempt", "instrumentation_error",
+    }]
+    if len(interesting) > limit:
+        indexes = sorted({round(i * (len(interesting) - 1) / (limit - 1)) for i in range(limit)})
+        interesting = [interesting[i] for i in indexes]
+    return interesting
+
+
 def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b", base_url=None, static_report=None):
     root, metadata, states, screenshots = read_session(session_dir)
     client = Ollama(base_url=base_url, model=model)
