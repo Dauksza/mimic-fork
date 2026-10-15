@@ -658,8 +658,14 @@ def main():
     try:
         require_windows_dependencies()
     except WindowsCaptureError as exc:
-        print(str(exc), file=sys.stderr)
-        print('Install dependencies with: python -m pip install -e ".[windows]"', file=sys.stderr)
+        details = str(exc) + '\n\nRun Install-Mimic.bat in the repository folder to install the required Windows UI dependencies.'
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Mimic setup required", details)
+            root.destroy()
+        except Exception:
+            print(details, file=sys.stderr)
         return 1
     root = tk.Tk()
     MimicWindowsApp(root)
