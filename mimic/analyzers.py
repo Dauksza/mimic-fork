@@ -441,6 +441,16 @@ def _analyze_android(target, out_dir, ghidra_home, status, max_decompile=1000):
     output.mkdir(parents=True, exist_ok=True)
     inventory = _archive_inventory(target)
     (output / "package-inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
+    nested_summaries = []
+    if Path(target).suffix.casefold() in {".apks", ".apkm", ".xapk"}:
+        try:
+            nested_apks = _safe_extract_members(target, output / "split-apks", lambda name: Path(name).suffix.casefold() == ".apk", max_members=12, max_total=MAX_TOTAL_EXTRACT_BYTES)
+        except (ReverseEngineeringError, zipfile.BadZipFile, OSError) as exc:
+            nested_summaries.append({"error": "Could not extract nested APKs: " + str(exc)[:300]})
+            nested_apks = []
+        for index, nested_apk in enumerate(nested_apks[:12]):
+            status("Found embedded Android APK " + str(index + 1) + "/" + str(len(nested_apks)))
+            nested_summaries.append({"apk": str(nested_apk), "nested_apk_path": str(nested_apk)})
     report: dict[str, Any] = {
         "type": "android_package",
         "target": str(target),
@@ -448,6 +458,7 @@ def _analyze_android(target, out_dir, ghidra_home, status, max_decompile=1000):
         "package_files": inventory,
         "tools": {},
         "native_modules": [],
+        "nested_apks": nested_summaries,
         "warnings": [],
     }
     report["tools"]["jadx"] = _run_jadx(target, output / "jadx-output", status=status)
