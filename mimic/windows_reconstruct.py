@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 from .ollama import Ollama, OllamaError
+from .runtime_trace import _redact_windows_user_path
 
 REQUIRED = {"main.py", "requirements.txt", "README.md"}
 VISION_HINTS = ("qwen2.5vl", "qwen2-vl", "gemma3:4b", "gemma3:12b", "gemma3:27b", "minicpm-v", "llama3.2-vision")
@@ -135,7 +136,7 @@ def read_runtime_events(session_root, limit=300):
         ) if key in item}
         for key, value in list(event.items()):
             if isinstance(value, str):
-                event[key] = safe_text(value, 320)
+                event[key] = _redact_windows_user_path(safe_text(value, 320))
         if any(term in json.dumps(event).casefold() for term in sensitive_terms):
             event = {key: value for key, value in event.items() if key not in {"path", "source", "destination", "subkey", "application"}}
         if event:
