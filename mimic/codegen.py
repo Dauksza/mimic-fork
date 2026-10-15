@@ -19,8 +19,8 @@ def build_digest(endpoints):
             value = e.get(key)
             if value:
                 fields.append(f"{key}: {str(value)[:2500]}")
-        parts.append("\\n".join(fields))
-    return "\\n\\n".join(parts)
+        parts.append("\n".join(fields))
+    return "\n\n".join(parts)
 
 
 def build_prompt(host, endpoints):
@@ -41,8 +41,8 @@ def generate(host, endpoints, model="qwen2.5-coder:14b", generator="ollama", bas
     )
     source = raw.strip()
     if source.startswith(chr(96) * 3):
-        source = re.sub(r"^" + chr(96) * 3 + r"(?:python)?\\s*|\\s*" + chr(96) * 3 + r"$", "", source, flags=re.I)
-    source = source.strip() + "\\n"
+        source = re.sub(r"^" + chr(96) * 3 + r"(?:python)?\s*|\s*" + chr(96) * 3 + r"$", "", source, flags=re.I)
+    source = source.strip() + "\n"
     if "class " not in source or "mimic.App" not in source:
         raise OllamaError("Ollama output did not contain a client subclassing mimic.App. Try a coding model with a larger context window.")
     return source
