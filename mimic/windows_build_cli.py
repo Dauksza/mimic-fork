@@ -21,7 +21,7 @@ def main(argv=None):
     parser.add_argument("-o", "--out", required=True, help="new or empty output project directory")
     parser.add_argument("--binary", help="EXE/DLL to analyze; defaults to the executable path stored by capture")
     parser.add_argument("--ghidra-home", default=os.environ.get("GHIDRA_HOME"),
-                        help="Ghidra installation folder containing support/analyzeHeadless.bat")
+                        help="Ghidra installation folder containing support/analyzeHeadless (or analyzeHeadless.bat on Windows)")
     parser.add_argument("--max-decompile", type=int, default=int(os.environ.get("MIMIC_GHIDRA_MAX_DECOMPILE", "1000")),
                         help="maximum decompiled functions per primary binary (0-5000; higher takes longer)")
     parser.add_argument("--model", default=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"),
