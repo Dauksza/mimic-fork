@@ -17,6 +17,7 @@ def main(argv=None):
     parser.add_argument('--name', help='display name for the reconstructed app')
     parser.add_argument('--model', default='qwen2.5-coder:14b', help='installed Ollama model')
     parser.add_argument('--ollama-url', default=None, help='Ollama URL; defaults to OLLAMA_HOST or localhost')
+    parser.add_argument('--screenshots', default=None, help='directory containing screenshots of the target app (PNG/JPG/WebP)')
     args = parser.parse_args(argv)
     try:
         if args.har:
@@ -25,7 +26,7 @@ def main(argv=None):
             proxy = mitm.Mitm()
             endpoints = mitm.endpoints(proxy, proxy.flows(), args.host)
         out = args.out or re.sub(r'[^a-z0-9]+', '-', args.host.split('.')[0].lower()).strip('-') + '-web'
-        files = reconstruct(args.host, endpoints, out, app_name=args.name, model=args.model, base_url=args.ollama_url)
+        files = reconstruct(args.host, endpoints, out, app_name=args.name, model=args.model, base_url=args.ollama_url, screenshots_dir=args.screenshots)
     except (OllamaError, ValueError, FileExistsError, OSError) as exc:
         print('Build failed: ' + str(exc), file=sys.stderr)
         return 1
