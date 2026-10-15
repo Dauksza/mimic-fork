@@ -1,4 +1,4 @@
-"""Invoke an installed Ghidra headless analyzer for a selected Windows executable."""
+"""Invoke Ghidra headless analysis for native binaries on Windows, Linux, and macOS."""
 from __future__ import annotations
 
 import json
@@ -22,24 +22,31 @@ def find_ghidra_home(configured=None):
     for value in (configured, os.environ.get("GHIDRA_HOME"), os.environ.get("GHIDRA_INSTALL_DIR")):
         if value:
             candidates.append(Path(value).expanduser())
-    for value in (Path.home(), Path("C:/"), Path("C:/Program Files"), Path("C:/Tools")):
+    if os.name == "nt":
+        scan_roots = (Path.home(), Path("C:/"), Path("C:/Program Files"), Path("C:/Tools"))
+        executable_names = ("analyzeHeadless.bat", "analyzeHeadless")
+    else:
+        scan_roots = (Path.home(), Path("/opt"), Path("/usr/local"), Path("/Applications"))
+        executable_names = ("analyzeHeadless", "analyzeHeadless.bat")
+    for root in scan_roots:
         try:
-            candidates.extend(value.glob("ghidra*"))
+            if root.is_dir():
+                candidates.extend(root.glob("ghidra*"))
         except OSError:
             pass
-    path_exe = shutil.which("analyzeHeadless.bat") or shutil.which("analyzeHeadless")
-    if path_exe:
-        candidates.append(Path(path_exe).resolve().parent.parent)
+    for name in executable_names:
+        executable = shutil.which(name)
+        if executable:
+            candidates.append(Path(executable).resolve().parent.parent)
     for candidate in candidates:
         try:
             home = candidate.resolve()
-            headless = home / "support" / "analyzeHeadless.bat"
-            if headless.is_file():
+            support = home / "support"
+            if any((support / name).is_file() for name in executable_names):
                 return home
         except OSError:
             continue
     return None
-
 
 def process_executable_path(pid):
     """Query the selected process image path through the Windows process API."""
@@ -96,7 +103,16 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
             "Ghidra was not found. Install Ghidra, then set GHIDRA_HOME to its extracted folder "
             "or select that folder in Mimic. Mimic uses Ghidra's support/analyzeHeadless.bat."
         )
-    analyzer = home / "support" / "analyzeHeadless.bat"
+    if os.name == "nt":
+        analyzer = home / "support" / "analyzeHeadless.bat"
+        if not analyzer.is_file():
+            analyzer = home / "support" / "analyzeHeadless"
+    else:
+        analyzer = home / "support" / "analyzeHeadless"
+        if not analyzer.is_file():
+            analyzer = home / "support" / "analyzeHeadless.bat"
+    if not analyzer.is_file():
+        raise GhidraError("Could not find Ghidra's native headless launcher in " + str(home / "support"))
     out = Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     scripts_dir = Path(__file__).resolve().parent / "ghidra_scripts"
