@@ -8,6 +8,7 @@ from mimic.analyzers import (
     ReverseEngineeringError,
     _compact_analysis,
     _safe_extract_members,
+    _safe_extract_tar,
     _source_inventory,
     _analyze_wasm,
     detect_runtime,
@@ -33,6 +34,14 @@ def test_detect_runtime_recognizes_common_package_types(tmp_path):
     wasm = tmp_path / "module.wasm"
     wasm.write_bytes(b"\x00asm")
     assert detect_runtime(wasm)["type"] == "wasm_binary"
+
+    package = tmp_path / "sample.deb"
+    package.write_bytes(b"not extracted by this classification test")
+    assert detect_runtime(package)["type"] == "system_package"
+
+    archive = tmp_path / "source.tar.gz"
+    archive.write_bytes(b"not extracted by this classification test")
+    assert detect_runtime(archive)["type"] == "system_package"
 
 
 def test_detect_runtime_identifies_android_zip_from_members(tmp_path):
@@ -129,3 +138,35 @@ def test_runtime_events_are_filtered_and_username_redacted(tmp_path):
     assert len(events) == 1
     assert events[0]["type"] == "module_load"
     assert r"\Users\Chris" not in events[0]["path"]
+
+
+
+def test_safe_tar_extraction_skips_traversal_links_and_non_source_data(tmp_path):
+    import io
+    import tarfile
+
+    archive_path = tmp_path / "source.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        source = b"def valid_source(): return True\n"
+        info = tarfile.TarInfo("src/app.py")
+        info.size = len(source)
+        archive.addfile(info, io.BytesIO(source))
+        unsafe = b"unsafe"
+        info = tarfile.TarInfo("../outside.py")
+        info.size = len(unsafe)
+        archive.addfile(info, io.BytesIO(unsafe))
+        ignored = b"binary blob"
+        info = tarfile.TarInfo("data/opaque.blob")
+        info.size = len(ignored)
+        archive.addfile(info, io.BytesIO(ignored))
+        link = tarfile.TarInfo("src/linked.py")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../outside.py"
+        archive.addfile(link)
+
+    output = tmp_path / "extracted"
+    files = _safe_extract_tar(archive_path, output)
+    assert len(files) == 1
+    assert Path(files[0]).read_text(encoding="utf-8") == "def valid_source(): return True\n"
+    assert not (tmp_path / "outside.py").exists()
+    assert not (output / "src" / "linked.py").exists()
