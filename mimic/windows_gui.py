@@ -179,8 +179,8 @@ class MimicWindowsApp:
             font=("Segoe UI", 10, "bold"), wraplength=1080, justify="left",
         ).pack(anchor="w")
 
-        log_frame = tk.Frame(self.root, bg="#0b1220", padx=18, pady=(0, 8))
-        log_frame.pack(fill="both")
+        log_frame = tk.Frame(self.root, bg="#0b1220", padx=18)
+        log_frame.pack(fill="both", pady=(0, 8))
         log_header = tk.Frame(log_frame, bg="#0b1220")
         log_header.pack(fill="x")
         tk.Label(log_header, text="ACTIVITY", fg="#c5d1e5", bg="#0b1220",
