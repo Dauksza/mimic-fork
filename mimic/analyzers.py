@@ -590,6 +590,38 @@ def _analyze_jvm(target, out_dir, status):
     return report
 
 
+def _disassemble_pyc(path, output_dir):
+    import dis
+    import importlib.util
+    import marshal
+    import types
+
+    source = Path(path)
+    data = source.read_bytes()
+    if len(data) < 16:
+        return {"status": "error", "note": "File is too small to be a standard modern Python .pyc."}
+    if data[:4] != importlib.util.MAGIC_NUMBER:
+        return {
+            "status": "incompatible_python_version",
+            "note": "The pyc magic number does not match the current interpreter. Use a matching Python runtime or a version-independent decompiler.",
+            "magic_hex": data[:4].hex(),
+        }
+    try:
+        code = marshal.loads(data[16:])
+    except (ValueError, EOFError, TypeError) as exc:
+        return {"status": "error", "note": "Bytecode could not be unmarshalled: " + str(exc)[:240]}
+    if not isinstance(code, types.CodeType):
+        return {"status": "error", "note": "PYC did not contain a code object."}
+    dest = Path(output_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    output = dest / (source.stem + ".dis.txt")
+    with output.open("w", encoding="utf-8", errors="replace") as stream:
+        stream.write("Python bytecode disassembly for " + str(source) + "\n")
+        dis.dis(code, file=stream, depth=None)
+    return {"status": "ok", "magic_hex": data[:4].hex(), "python_version": sys.version,
+            "disassembly": str(output), "note": "Disassembly only; this is not equivalent to recovered source code."}
+
+
 def _analyze_python(target, out_dir):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -598,12 +630,40 @@ def _analyze_python(target, out_dir):
     if path.is_dir() or path.suffix.casefold() in {".py", ".pyw"}:
         root = path if path.is_dir() else path.parent
         report["source_inventory"] = _source_inventory(root, max_files=12000)
-    if path.suffix.casefold() in {".pyc", ".pyo", ".pyz"}:
-        report["warnings"].append("Bytecode/version compatibility affects Python decompilation. A trustworthy decompiler was not found automatically; raw bytecode can still be disassembled with Python's dis module when its interpreter version matches.")
+    if path.suffix.casefold() == ".pyz":
+        extracted = _safe_extract_members(
+            path, output / "pyz-extracted",
+            lambda name: Path(name).suffix.casefold() in {".py", ".pyc", ".pyo", ".json", ".toml", ".txt", ".so", ".pyd", ".dll"},
+            max_members=15000,
+            max_total=2_000_000_000,
+        )
+        report["pyz_extracted_file_count"] = len(extracted)
+        report["source_inventory"] = _source_inventory(output / "pyz-extracted", max_files=15000)
+    if path.suffix.casefold() in {".pyc", ".pyo"}:
+        report["bytecode"] = _disassemble_pyc(path, output / "disassembly")
         report["tools"]["uncompyle6"] = {"available": bool(shutil.which("uncompyle6")), "path": shutil.which("uncompyle6")}
         report["tools"]["decompyle3"] = {"available": bool(shutil.which("decompyle3")), "path": shutil.which("decompyle3")}
+        report["tools"]["pycdc"] = {"available": bool(shutil.which("pycdc")), "path": shutil.which("pycdc")}
+        if report["bytecode"].get("status") == "incompatible_python_version":
+            report["warnings"].append("Current Python cannot disassemble this bytecode version; use a matching Python version or pyinstxtractor-ng plus a compatible decompiler.")
     if path.suffix.casefold() == ".exe":
-        report["warnings"].append("For frozen Python EXEs, extract the embedded archive with an installed pyinstxtractor-ng tool, then analyze extracted .pyc files with a version-compatible decompiler.")
+        extractor = shutil.which("pyinstxtractor-ng") or shutil.which("pyinstxtractor-ng.exe") or shutil.which("pyinstxtractor")
+        if extractor:
+            extracted_result = _run_tool([extractor, str(path)], output / "pyinstxtractor.log", 1800, cwd=str(output))
+            report["tools"]["pyinstxtractor-ng"] = extracted_result
+            candidates = list(output.glob(path.name + "_extracted")) + list(output.glob(path.stem + "_extracted"))
+            if candidates and candidates[0].is_dir():
+                tree = candidates[0]
+                report["extracted_dir"] = str(tree)
+                report["source_inventory"] = _source_inventory(tree, max_files=15000)
+                pyc_files = list(tree.rglob("*.pyc"))[:50]
+                decompiler = shutil.which("decompyle3") or shutil.which("uncompyle6")
+                if decompiler and pyc_files:
+                    result = _run_tool([decompiler, "-o", str(output / "decompiled-source"), *map(str, pyc_files)],
+                                       output / "python-decompiler.log", 1800, cwd=str(tree))
+                    report["tools"]["python_decompiler"] = result
+        else:
+            report["warnings"].append("No pyinstxtractor-ng found. If this is a PyInstaller EXE, install pyinstxtractor-ng locally to unpack embedded Python modules; Mimic will not download tools automatically.")
     return report
 
 
