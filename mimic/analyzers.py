@@ -1176,11 +1176,20 @@ def _compact_analysis(manifest):
         if key in analysis:
             value = analysis[key]
             if key == "tools" and isinstance(value, dict):
-                compact["evidence"][key] = {
-                    name: {k: v for k, v in item.items() if k not in {"stdout_excerpt", "stderr_excerpt"}}
-                    if isinstance(item, dict) else item
-                    for name, item in list(value.items())[:20]
-                }
+                tool_summaries = {}
+                for name, item in list(value.items())[:20]:
+                    if not isinstance(item, dict):
+                        tool_summaries[name] = item
+                        continue
+                    summary = {
+                        k: v for k, v in item.items()
+                        if k not in {"stdout_excerpt", "stderr_excerpt", "source_inventory", "resource_inventory"}
+                        and k not in {"source_excerpt"}
+                    }
+                    if isinstance(item.get("source_inventory"), dict):
+                        summary["source_inventory"] = _compact_inventory(item["source_inventory"], source_limit=6)
+                    tool_summaries[name] = summary
+                compact["evidence"][key] = tool_summaries
             elif key in {"package_files", "module_functions", "module_strings", "module_decompiled_functions"} and isinstance(value, list):
                 compact["evidence"][key] = value[:70]
             elif key == "binary_reports" and isinstance(value, list):
