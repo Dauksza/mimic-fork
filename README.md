@@ -77,13 +77,15 @@ Mimic does not download or install reverse-engineering tools. Install required t
 |---|---|---|
 | Windows EXE/DLL/OCX/SYS | Ghidra headless, pefile | functions, selected decompilation, symbols, references/call graph, strings, imports/exports, PE headers/sections and app-local DLLs |
 | .NET assemblies and apphost | Ghidra for native wrappers; ilspycmd for managed DLLs when installed | managed source tree, types, runtime configs, dependencies and native imports |
-| Android APK/AAB/AAR/APKM/XAPK | JADX, Apktool, Ghidra for bundled native libraries | decompiled bytecode, manifest/resources/smali, DEX/native inventory |
+| Android APK/AAB/AAR/APKM/APKS/XAPK | JADX, Apktool, Ghidra for bundled native libraries | decompiled bytecode, manifest/resources/smali, DEX/native inventory |
 | JVM JAR/class | JADX and javap from a JDK | decompiled source where supported, bytecode, method descriptors and class inventory |
 | Electron | installed asar CLI | extracted JS/HTML/CSS/resources and package metadata |
 | Python source, pyz, pyc, frozen PyInstaller | source inventory, matching-version dis; optional pyinstxtractor-ng and decompyle3/uncompyle6 | source structure and bytecode disassembly/decompilation where compatible |
 | iOS IPA/macOS app bundle/native frameworks | plist/resource inspection and Ghidra for supported native modules | bundle metadata, native functions and strings |
 | Windows MSIX/APPX/MSI/EXE installers | package inspection; optional lessmsi, innoextract or 7-Zip | manifests, files and extracted payload binaries |
 | JavaScript/TypeScript/Python/Java/C#/Go/Rust source | source inventory and project metadata | file hashes, class/function names, likely entry-point source excerpts |
+| Linux packages (.deb, .rpm, AppImage, Snap, Flatpak) and macOS containers (.dmg, .pkg) | dpkg-deb, unsquashfs, pkgutil, bsdtar or 7-Zip when installed | package payload, manifests/configs and native modules |
+| Safe tar archives (.tar, .tar.gz, .tar.bz2, .tar.xz) | Mimic's selective extractor (regular source/config/binary files only; links/special entries are skipped) | source inventory and selected binary analysis |
 | WebAssembly .wasm/.wat | wasm-tools, WABT (wasm2wat/wasm-objdump), wasm-decompile | module structure, imports/exports and disassembly/decompilation |
 
 Install only adapters appropriate to your target. For example, ILSpy command-line for .NET:
