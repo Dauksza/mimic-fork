@@ -191,13 +191,8 @@ def test_compact_analysis_preserves_managed_decompilation_evidence():
         "target": "app.exe",
         "detection": {"type": "windows_binary"},
         "analysis": {
-            "tools": {
-                "ilspy": {
-                    "status": "ok",
-                    "ilspy_source_excerpt": "public class App { public void Start() {} }",
-                    "runtime_layout_markers": ["hostfxr.dll"],
-                }
-            }
+            "ilspy_source_excerpt": "public class App { public void Start() {} }",
+            "runtime_layout_markers": ["hostfxr.dll"],
         },
         "warnings": [],
     }
