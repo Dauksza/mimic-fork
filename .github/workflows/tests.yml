@@ -17,4 +17,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e ".[capture,analysis]" pytest
       - run: python -m compileall -q mimic
+      - run: mimic-analyze --help
+      - run: mimic-trace --help
       - run: python -m pytest -q
