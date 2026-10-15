@@ -18,7 +18,10 @@ def build_digest(endpoints):
         for key in ("query", "request_body", "response_body"):
             value = e.get(key)
             if value:
-                fields.append(f"{key}: {str(value)[:2500]}")
+                value = str(value)[:2500]
+                value = re.sub(r"(?i)bearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", value)
+                value = re.sub(r"(?i)(access_?token|refresh_?token|password|passwd|secret|api_?key|cookie|session_?id)(\\\\?\s*[:=]\\\\?\s*)[^,\\s}]+", r"\\1=[REDACTED]", value)
+                fields.append(f"{key}: {value}")
         parts.append("\n".join(fields))
     return "\n\n".join(parts)
 
