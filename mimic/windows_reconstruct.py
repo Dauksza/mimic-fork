@@ -164,48 +164,99 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
     if static_report:
         report_path = Path(static_report).expanduser().resolve()
         if not report_path.is_file():
-            raise ValueError("Ghidra report does not exist: " + str(report_path))
+            raise ValueError("Static-analysis report does not exist: " + str(report_path))
         try:
             raw_report = json.loads(report_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError("Ghidra report is invalid JSON: " + str(report_path)) from exc
+            raise ValueError("Static-analysis report is invalid JSON: " + str(report_path)) from exc
+
+        detection = raw_report.get("detection", {}) if isinstance(raw_report, dict) else {}
+        analysis_report = raw_report.get("analysis", {}) if isinstance(raw_report, dict) else {}
+        if not isinstance(analysis_report, dict):
+            analysis_report = {}
+        if isinstance(analysis_report.get("native_analysis"), dict):
+            analysis_report = analysis_report["native_analysis"]
+        if not analysis_report and isinstance(raw_report, dict):
+            analysis_report = raw_report
+
+        def bounded_items(items, limit, text_limit=950):
+            output = []
+            if not isinstance(items, list):
+                return output
+            for item in items[:limit]:
+                if not isinstance(item, dict):
+                    continue
+                output.append({
+                    key: safe_text(value, text_limit) if isinstance(value, str) and key in {"name", "value", "code", "path", "type"}
+                    else value
+                    for key, value in item.items()
+                    if key in {"name", "value", "code", "path", "type", "address", "parameter_count", "size_bytes", "return_type", "module", "status", "function_count", "symbol_count", "string_count", "decompiled_function_count"}
+                })
+            return output
+
         ghidra_spec = {
-            "program_name": safe_text(raw_report.get("program_name", ""), 160),
-            "language": raw_report.get("language"),
-            "compiler": raw_report.get("compiler"),
-            "function_count": raw_report.get("function_count"),
-            "functions": [
-                {"name": safe_text(fn.get("name", ""), 140), "address": fn.get("address"),
-                 "parameter_count": fn.get("parameter_count"), "size_bytes": fn.get("size_bytes")}
-                for fn in raw_report.get("functions", [])[:100]
-            ],
-            "symbols": [
-                {"name": safe_text(sym.get("name", ""), 130), "address": sym.get("address"),
-                 "type": sym.get("type")}
-                for sym in raw_report.get("symbols", [])[:75]
-            ],
-            "strings": [
-                {"address": item.get("address"), "value": safe_text(item.get("value", ""), 170)}
-                for item in raw_report.get("strings", [])[:100]
-            ],
-            "decompiled_functions": [
-                {"name": safe_text(fn.get("name", ""), 130),
-                 "address": fn.get("address"),
-                 "code": safe_text(fn.get("code", ""), 950)}
-                for fn in raw_report.get("decompiled_functions", [])[:6]
-            ],
+            "program_name": safe_text(analysis_report.get("program_name", ""), 160),
+            "language": analysis_report.get("language"),
+            "compiler": analysis_report.get("compiler"),
+            "function_count": analysis_report.get("total_function_count", analysis_report.get("function_count")),
+            "symbol_count": analysis_report.get("total_symbol_count", analysis_report.get("symbol_count")),
+            "string_count": analysis_report.get("total_string_count", analysis_report.get("string_count")),
+            "call_reference_count": analysis_report.get("total_call_reference_count", analysis_report.get("call_reference_count")),
+            "functions": bounded_items(analysis_report.get("functions", []), 85),
+            "symbols": bounded_items(analysis_report.get("symbols", []), 55),
+            "strings": bounded_items(analysis_report.get("strings", []), 80, 220),
+            "decompiled_functions": bounded_items(analysis_report.get("decompiled_functions", []), 7, 900),
+            "modules": bounded_items(analysis_report.get("modules", []), 20),
+            "native_modules": bounded_items(analysis_report.get("native_modules", []), 12),
+            "module_functions": bounded_items(analysis_report.get("module_functions", []), 35),
+            "module_strings": bounded_items(analysis_report.get("module_strings", []), 35, 220),
+            "module_decompiled_functions": bounded_items(analysis_report.get("module_decompiled_functions", []), 5, 900),
+            "dependency_warnings": analysis_report.get("dependency_warnings", [])[:15],
+            "tool_warnings": raw_report.get("warnings", [])[:20] if isinstance(raw_report.get("warnings"), list) else [],
+            "application_type": detection.get("type"),
+            "frameworks": detection.get("frameworks", []),
+            "runtime_markers": analysis_report.get("runtime_layout_markers", [])[:30],
         }
-        notes.append("Static reverse engineering imported: " + str(ghidra_spec.get("function_count", 0)) + " functions found.")
-        if isinstance(raw_report.get("analysis"), dict):
-            ghidra_spec["application_type"] = raw_report.get("detection", {}).get("type")
-            ghidra_spec["frameworks"] = raw_report.get("detection", {}).get("frameworks", [])
-            ghidra_spec["modules"] = analysis_report.get("modules", [])[:20]
+        source_inventory = analysis_report.get("source_inventory")
+        if isinstance(source_inventory, dict):
+            ghidra_spec["source_inventory"] = {
+                "file_count": source_inventory.get("file_count"),
+                "report_path": source_inventory.get("report_path"),
+                "key_source_files": [
+                    {
+                        "path": item.get("path"),
+                        "classes": item.get("classes", [])[:15],
+                        "functions": item.get("functions", [])[:20],
+                        "line_count": item.get("line_count"),
+                    }
+                    for item in source_inventory.get("files", [])[:45]
+                    if isinstance(item, dict)
+                ],
+                "priority_source_samples": [
+                    {"path": item.get("path"), "content": safe_text(item.get("content", ""), 1600)}
+                    for item in source_inventory.get("priority_source_samples", [])[:6]
+                    if isinstance(item, dict)
+                ],
+            }
+        tool_records = analysis_report.get("tools")
+        if isinstance(tool_records, dict):
+            ghidra_spec["format_tools"] = {
+                name: {
+                    key: value for key, value in item.items()
+                    if key in {"available", "status", "exit_code", "class_count_attempted", "output_dir", "note"}
+                } if isinstance(item, dict) else item
+                for name, item in list(tool_records.items())[:15]
+            }
         summary_path = report_path.parent / "ollama-analysis-summary.json"
         if summary_path.is_file():
             try:
                 ghidra_spec["prior_ollama_findings"] = json.loads(summary_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 pass
+        notes.append(
+            "Static-analysis evidence imported for " + str(ghidra_spec.get("application_type") or "selected application")
+            + "; function inventory count: " + str(ghidra_spec.get("function_count", "not applicable")) + "."
+        )
     vision_client = Ollama(base_url=base_url, model=vision_model)
     vision_available = vision_client.models()
     if screenshots and supports_vision(vision_client, vision_model, vision_available):
