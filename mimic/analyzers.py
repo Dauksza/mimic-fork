@@ -23,8 +23,8 @@ from .ghidra import (
     find_ghidra_home,
 )
 
-SUPPORTED_ARCHIVES = {".apk", ".aab", ".aar", ".apkm", ".xapk", ".ipa", ".appx", ".msix", ".zip", ".jar"}
-ANDROID_TYPES = {".apk", ".aab", ".aar", ".apkm", ".xapk", ".dex", ".smali"}
+SUPPORTED_ARCHIVES = {".apk", ".aab", ".aar", ".apkm", ".apks", ".xapk", ".ipa", ".appx", ".msix", ".zip", ".jar"}
+ANDROID_TYPES = {".apk", ".aab", ".aar", ".apkm", ".apks", ".xapk", ".dex", ".smali"}
 APPLE_TYPES = {".ipa", ".dylib", ".framework", ".bundle"}
 PE_TYPES = {".exe", ".dll", ".ocx", ".sys"}
 NATIVE_TYPES = {".so", ".dylib", ".elf", ".o", ".a", ".bin", ".mach-o"}
@@ -115,7 +115,7 @@ def detect_runtime(path):
         return facts
 
     if ext in ANDROID_TYPES:
-        facts["type"] = "android_package" if ext in {".apk", ".aab", ".apkm", ".xapk"} else "jvm_bytecode"
+        facts["type"] = "android_package" if ext in {".apk", ".aab", ".apkm", ".apks", ".xapk"} else "jvm_bytecode"
         facts["frameworks"].append("Android/Dalvik" if facts["type"] == "android_package" else "JVM/Dalvik")
         return facts
     if ext in APPLE_TYPES:
