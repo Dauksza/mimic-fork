@@ -38,7 +38,7 @@ public class MimicExport extends GhidraScript {
 
     private String limited(String value, int max) {
         if (value == null) return "";
-        String clean = value.replace('\u0000', ' ').trim();
+        String clean = value.replace((char) 0, ' ').trim();
         if (clean.length() > max) return clean.substring(0, max);
         return clean;
     }
