@@ -43,6 +43,45 @@ def _safe_text(value, limit=220):
     return text[:limit]
 
 
+
+
+_PROCESS_PATH_CACHE = {}
+
+
+def _process_image_path(pid):
+    """Return the Windows executable path for a PID when permissions allow."""
+    if pid in _PROCESS_PATH_CACHE:
+        return _PROCESS_PATH_CACHE[pid]
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
+        ]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return None
+        try:
+            buffer = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(buffer))
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                _PROCESS_PATH_CACHE[pid] = buffer.value
+                return buffer.value
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return None
+    return None
+
+
 def list_windows(exclude_pid=None):
     """Return visible top-level windows with basic identity and geometry."""
     require_windows_dependencies()
@@ -68,6 +107,7 @@ def list_windows(exclude_pid=None):
             found.append({
                 "hwnd": hwnd,
                 "pid": pid,
+                "executable_path": _process_image_path(pid),
                 "title": title,
                 "class_name": _safe_text(wrapper.element_info.class_name, 120),
                 "rect": [rect.left, rect.top, width, height],
@@ -181,9 +221,10 @@ def _screenshot_bytes(pid):
 
 
 class CaptureSession:
-    def __init__(self, pid, title, out_dir, poll_interval=1.0, on_status=None):
+    def __init__(self, pid, title, out_dir, poll_interval=1.0, on_status=None, executable_path=None):
         self.pid = int(pid)
         self.title = _safe_text(title, 180)
+        self.executable_path = executable_path or _process_image_path(self.pid)
         self.out_dir = Path(out_dir).expanduser().resolve()
         self.poll_interval = max(0.5, float(poll_interval))
         self.on_status = on_status or (lambda message: None)
@@ -205,6 +246,7 @@ class CaptureSession:
             "capture_mode": "visible window UI Automation and screenshots",
             "target_pid": self.pid,
             "target_title": self.title,
+            "executable_path": self.executable_path,
             "started_at": _now(),
             "ended_at": None,
             "notes": [
