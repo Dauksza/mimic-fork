@@ -198,17 +198,36 @@ def _screenshot_bytes(pid):
 
     desktop = Desktop(backend="uia")
     candidates = []
+    foreground_handle = None
+    foreground_pid = None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        foreground_handle = int(user32.GetForegroundWindow() or 0)
+        foreground_pid_value = wintypes.DWORD(0)
+        if foreground_handle:
+            user32.GetWindowThreadProcessId(wintypes.HWND(foreground_handle), ctypes.byref(foreground_pid_value))
+            foreground_pid = int(foreground_pid_value.value)
+    except Exception:
+        foreground_handle = foreground_pid = None
+
     for wrapper in desktop.windows(visible_only=True, enabled_only=False):
         try:
             if int(wrapper.element_info.process_id or 0) == int(pid):
                 rect = wrapper.rectangle()
                 if rect.width() >= 80 and rect.height() >= 50:
-                    candidates.append((rect.width() * rect.height(), wrapper))
+                    is_foreground = foreground_pid == int(pid) and int(wrapper.handle) == foreground_handle
+                    candidates.append((is_foreground, rect.width() * rect.height(), wrapper))
         except Exception:
             continue
     if not candidates:
         return None
-    wrapper = max(candidates, key=lambda item: item[0])[1]
+    # Prefer an active modal dialog/child window when possible, otherwise the largest top-level app window.
+    wrapper = sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True)[0][2]
     try:
         image = wrapper.capture_as_image()
     except Exception:
