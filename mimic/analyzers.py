@@ -985,7 +985,7 @@ def _analyze_system_package(target, out_dir, ghidra_home, status, max_decompile=
         elif suffix == ".pkg" and pkgutil and os.name == "darwin":
             tool_name, command = "pkgutil", ["--expand-full", str(path), str(extracted_root)]
         elif suffix == ".pkg" and xar:
-            tool_name, command = "xar", [xar, "-xf", str(path)]
+            tool_name, command = "xar", [xar, "-xf", str(path), "-C", str(extracted_root)]
         elif bsdtar:
             tool_name, command = "bsdtar", [bsdtar, "-xf", str(path), "-C", str(extracted_root)]
         elif seven_zip:
