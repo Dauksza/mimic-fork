@@ -391,6 +391,15 @@ class MimicWindowsApp:
             output.parent.mkdir(parents=True, exist_ok=True)
             if output.exists() and not output.is_dir():
                 raise NotADirectoryError(str(output) + " is not a folder")
+            if (
+                output.is_dir()
+                and any(output.iterdir())
+                and not (output / "mimic-analysis-manifest.json").is_file()
+            ):
+                raise FileExistsError(
+                    "The selected results folder is not empty and has no Mimic manifest. "
+                    "Choose an empty folder so existing files are not overwritten:\n" + str(output)
+                )
         except OSError as exc:
             messagebox.showerror("Cannot prepare output folder", str(exc))
             return
@@ -456,7 +465,7 @@ class MimicWindowsApp:
                 self._log("Optional analyzers not installed: " + ", ".join(missing))
         self._log("Results saved to: " + str(output))
         if summary_result:
-            self._log("Ollama report: " + summary_result["markdown"])
+            self._log("Ollama findings report saved to: " + summary_result["markdown"])
         if summary_error:
             self._log("Static analysis succeeded, but Ollama summary failed: " + summary_error)
         warnings = (report or {}).get("warnings", [])
@@ -472,7 +481,7 @@ class MimicWindowsApp:
             messagebox.showinfo(
                 "Analysis complete",
                 "Detected type: " + detection + "\n\nResults folder:\n" + str(output)
-                + ("\n\nAI findings:\n" + summary_result["markdown"] if summary_result else "")
+                + ("\n\nOllama findings report saved to:\n" + summary_result["markdown"] if summary_result else "")
             )
 
     def _log(self, message):
@@ -673,7 +682,7 @@ class MimicWindowsApp:
                     ". Review the generated code before running main.py."
                 )
                 if analysis_summary:
-                    message += " Ollama analysis report: " + analysis_summary["markdown"]
+                    message += " Ollama findings report saved to: " + analysis_summary["markdown"]
                 if notes:
                     message += " | " + "; ".join(notes)
                 self.root.after(0, self._build_finished, True, message)
