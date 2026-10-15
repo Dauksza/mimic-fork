@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -849,15 +850,22 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
             if _find_asar(target_path):
                 report["analysis"]["electron"] = _analyze_electron(target_path, output / "electron-analysis", status)
         elif detection["type"] == "native_binary":
-            if ext == ".pyc":
-                report["analysis"] = _analyze_python(target_path, output / "python-analysis")
-            else:
-                report["analysis"] = {
-                    "native_analysis": analyze_binary(
-                        str(target_path), str(output / "native-analysis"),
-                        ghidra_home=ghidra_home, max_decompile=350, on_status=status,
+            report["analysis"] = {
+                "native_analysis": analyze_binary(
+                    str(target_path), str(output / "native-analysis"),
+                    ghidra_home=ghidra_home, max_decompile=350, on_status=status,
+                )
+            }
+        elif detection["type"] == "python_frozen":
+            report["analysis"] = _analyze_python(target_path, output / "python-analysis")
+            if find_ghidra_home(ghidra_home):
+                try:
+                    report["analysis"]["native_analysis"] = analyze_application(
+                        str(target_path), str(output / "native-analysis"), ghidra_home=ghidra_home,
+                        max_modules=8, max_decompile=150, on_status=status,
                     )
-                }
+                except GhidraError as exc:
+                    report["warnings"].append("Native container analysis failed: " + str(exc))
         elif detection["type"] == "android_package":
             report["analysis"] = _analyze_android(target_path, output / "android-analysis", ghidra_home, status)
         elif detection["type"] == "jvm_bytecode":
@@ -866,12 +874,22 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
             report["analysis"] = _analyze_apple(target_path, output / "apple-analysis", ghidra_home, status)
         elif detection["type"] == "electron":
             report["analysis"] = _analyze_electron(target_path, output / "electron-analysis", status)
-        elif detection["type"] in {"javascript_project", "python_project", "jvm_project", "directory"}:
+        elif detection["type"] in {"javascript_project", "python_project", "jvm_project", "dotnet_project", "directory"}:
             report["analysis"] = _analyze_source(target_path, output / "source-analysis")
+            if detection["type"] == "dotnet_project" and shutil.which("dotnet"):
+                report["analysis"]["dotnet_sdk"] = _run_tool(
+                    [shutil.which("dotnet"), "--info"], output / "dotnet-info.log", 120
+                )
         elif detection["type"] == "javascript_source":
             report["analysis"] = _analyze_source(target_path, output / "source-analysis")
         elif detection["type"] == "python":
             report["analysis"] = _analyze_python(target_path, output / "python-analysis")
+        elif detection["type"] == "windows_application_folder":
+            report["analysis"] = _analyze_windows_folder(target_path, output / "folder-analysis", ghidra_home, status)
+        elif detection["type"] == "source_archive":
+            report["analysis"] = _analyze_source_archive(target_path, output / "archive-analysis", ghidra_home, status)
+        elif detection["type"] == "windows_installer":
+            report["analysis"] = _analyze_installer(target_path, output / "installer-analysis", ghidra_home, status)
         elif detection["type"] == "windows_package":
             extracted = _safe_extract_members(
                 target_path, output / "package-extracted",
@@ -892,8 +910,8 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
         elif ext in {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".html", ".css"}:
             report["analysis"] = _analyze_source(target_path, output / "source-analysis")
         else:
-            report["warnings"].append("No specific analyzer was selected for this file type. Try selecting the application folder or its main executable.")
-    except (GhidraError, ReverseEngineeringError, OSError, ValueError, json.JSONDecodeError) as exc:
+            report["warnings"].append("No format-specific analyzer was selected. Try the application installation folder, package archive, or main executable.")
+    except (GhidraError, ReverseEngineeringError, OSError, ValueError, json.JSONDecodeError, zipfile.BadZipFile, TypeError) as exc:
         report["warnings"].append(str(exc))
         report["analysis_error"] = str(exc)
     report["analysis_elapsed_seconds"] = round(time.monotonic() - start, 2)
