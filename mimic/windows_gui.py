@@ -131,6 +131,14 @@ class MimicWindowsApp:
     def _arm(self):
         if self.capture or self.discovery or self.busy:
             return
+        confirmed = messagebox.askyesno(
+            "Arm desktop observation",
+            "Mimic will observe the next visible Windows program window and save its UI structure and up to 240 screenshots.\n\n"
+            "Screenshots can contain confidential information. Close sensitive windows and use a test account.\n\n"
+            "Proceed with local capture on this PC?"
+        )
+        if not confirmed:
+            return
         try:
             require_windows_dependencies()
             root_dir = Path.home() / "MimicProjects" / "Captures"
@@ -185,7 +193,7 @@ class MimicWindowsApp:
         self.discovery = None
         self.discovery_stopped = None
         self.stop_button.configure(state="disabled")
-        self.arm_button.configure(state="normal")
+        self.arm_button.configure(state="disabled")
         self.build_button.configure(state="disabled")
         if active:
             self._log("Stopping capture and flushing events to disk…")
@@ -200,6 +208,7 @@ class MimicWindowsApp:
             self._capture_stopped()
 
     def _capture_stopped(self):
+        self.arm_button.configure(state="normal")
         has_events = bool(self.capture_dir and (self.capture_dir / "events.jsonl").exists())
         self.build_button.configure(state="normal" if has_events and not self.busy else "disabled")
         self._log("Capture saved. Generation will run Ghidra first, then local Ollama.")
