@@ -77,7 +77,7 @@ def _safe_project_name(path):
     return (stem or "MimicBinary")[:50] + "_Mimic"
 
 
-def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=1800, on_status=None):
+def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=5400, max_decompile=350, per_function_timeout=12, on_status=None):
     """Run real Ghidra analysis on an executable and its adjacent DLL dependencies."""
     status = on_status or (lambda message: None)
     binary = Path(binary_path).expanduser().resolve()
@@ -109,8 +109,8 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=1800, on_stat
         str(analyzer), str(project_dir), project_name,
         "-scriptPath", str(scripts_dir),
         "-import", str(binary),
-        "-postScript", "MimicExport.java", str(report_path),
-        "-analysisTimeoutPerFile", "900",
+        "-postScript", "MimicExport.java", str(report_path), str(max_decompile), str(per_function_timeout),
+        "-analysisTimeoutPerFile", "3600",
         "-max-cpu", str(max(1, min(4, os.cpu_count() or 2))),
     ]
     status("Ghidra: analyzing " + binary.name + " with headless static analysis…")
