@@ -353,6 +353,19 @@ def _discover_framework_modules(primary, max_count=8):
     if companion.is_file():
         found.append(companion)
         seen.add(str(companion).casefold())
+    known_runtime_modules = (
+        "GameAssembly.dll", "UnityPlayer.dll", "flutter_windows.dll", "libcef.dll",
+        "Qt6Core.dll", "Qt5Core.dll", "WebView2Loader.dll", "mono-2.0-bdwgc.dll",
+        "coreclr.dll", "hostfxr.dll", "node.dll", "v8_context_snapshot.bin",
+    )
+    for name in known_runtime_modules:
+        candidate = path.parent / name
+        key = str(candidate.resolve()).casefold()
+        if candidate.is_file() and key not in seen:
+            found.append(candidate.resolve())
+            seen.add(key)
+            if len(found) >= max_count:
+                return found
     search_roots = [path.parent]
     if len(path.parents) > 1:
         search_roots.append(path.parent.parent)
