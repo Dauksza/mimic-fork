@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from .analyzers import reverse_engineer, summarize_analysis_manifest
+from .analyzers import ReverseEngineeringError, reverse_engineer, summarize_analysis_manifest
 from .ghidra import find_ghidra_home
 from .ollama import OllamaError
 
@@ -38,7 +38,7 @@ def main(argv=None):
             max_decompile=max(0, min(5000, args.max_decompile)),
             on_status=lambda message: print("[mimic] " + str(message), file=sys.stderr, flush=True),
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, ReverseEngineeringError, RuntimeError) as exc:
         print("Analysis failed: " + str(exc), file=sys.stderr)
         return 1
 
