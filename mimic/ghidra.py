@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from .windows_capture import WindowsCaptureError, _now
@@ -104,9 +105,13 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
         raise GhidraError("Mimic's Ghidra export script is missing: " + str(script))
     report_path = out / "ghidra-analysis.json"
     project_dir = out / "ghidra-project"
-    # This directory is owned by Mimic's capture pipeline; remove only its prior disposable Ghidra project.
-    if project_dir.exists():
-        shutil.rmtree(project_dir)
+    # Preserve any existing Ghidra project so analysts do not lose labels/bookmarks on a rerun.
+    if project_dir.exists() and any(project_dir.iterdir()):
+        project_dir = out / ("ghidra-project-" + time.strftime("%Y%m%d_%H%M%S"))
+        suffix = 1
+        while project_dir.exists():
+            project_dir = out / ("ghidra-project-" + time.strftime("%Y%m%d_%H%M%S") + "-" + str(suffix))
+            suffix += 1
     project_dir.mkdir(parents=True, exist_ok=True)
     project_name = _safe_project_name(binary)
     command = [
