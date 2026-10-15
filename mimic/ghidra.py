@@ -100,6 +100,9 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=1800, on_stat
         raise GhidraError("Mimic's Ghidra export script is missing: " + str(script))
     report_path = out / "ghidra-analysis.json"
     project_dir = out / "ghidra-project"
+    # This directory is owned by Mimic's capture pipeline; remove only its prior disposable Ghidra project.
+    if project_dir.exists():
+        shutil.rmtree(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
     project_name = _safe_project_name(binary)
     command = [
@@ -112,11 +115,16 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=1800, on_stat
     ]
     status("Ghidra: analyzing " + binary.name + " with headless static analysis…")
     try:
-        completed = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout,
-            cwd=str(home), check=False,
-            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
-        )
+        if os.name == "nt":
+            # analyzeHeadless.bat must be invoked via cmd.exe on Windows.
+            command_line = subprocess.list2cmdline(command)
+            completed = subprocess.run(
+                ["cmd.exe", "/d", "/s", "/c", command_line], capture_output=True, text=True,
+                timeout=timeout, cwd=str(home), check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        else:
+            raise GhidraError("The desktop Ghidra stage currently targets the Windows analyzeHeadless.bat distribution.")
     except subprocess.TimeoutExpired as exc:
         raise GhidraError(f"Ghidra analysis exceeded {timeout} seconds. Check its log in {out}.") from exc
     (out / "ghidra-stdout.log").write_text(completed.stdout[-100000:], encoding="utf-8", errors="replace")
