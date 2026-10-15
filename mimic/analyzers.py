@@ -160,9 +160,18 @@ def detect_runtime(path):
 def _run_tool(command, log_path, timeout, cwd=None):
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    run_command = list(command)
+    if os.name == "nt" and str(command[0]).casefold().endswith((".bat", ".cmd")):
+        run_command = ["cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline(command)]
+
+    def as_text(value):
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value or "")
+
     try:
         result = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout,
+            run_command, capture_output=True, text=True, timeout=timeout,
             cwd=cwd, check=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
         )
@@ -170,7 +179,7 @@ def _run_tool(command, log_path, timeout, cwd=None):
         return {"available": False, "status": "missing", "command": command[0], "exit_code": None}
     except subprocess.TimeoutExpired as exc:
         path.write_text(
-            (exc.stdout or "")[-50000:] + "\n[TIMEOUT]\n" + (exc.stderr or "")[-50000:],
+            as_text(exc.stdout)[-50000:] + "\n[TIMEOUT]\n" + as_text(exc.stderr)[-50000:],
             encoding="utf-8", errors="replace",
         )
         return {"available": True, "status": "timeout", "command": command[0], "exit_code": None, "log": str(path)}
