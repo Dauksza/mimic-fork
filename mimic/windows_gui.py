@@ -318,7 +318,7 @@ class MimicWindowsApp:
         if not target.exists():
             messagebox.showwarning("Choose a target", "Browse to an application file or folder first.")
             return
-        if not str(output):
+        if not self.analysis_output_var.get().strip():
             messagebox.showwarning("Choose an output folder", "Choose where the analysis reports should be saved.")
             return
         try:
@@ -332,9 +332,11 @@ class MimicWindowsApp:
             messagebox.showwarning("Model required", "Enter an installed Ollama model or turn off AI summary.")
             return
         try:
-            output.mkdir(parents=True, exist_ok=True)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if output.exists() and not output.is_dir():
+                raise NotADirectoryError(str(output) + " is not a folder")
         except OSError as exc:
-            messagebox.showerror("Cannot create output folder", str(exc))
+            messagebox.showerror("Cannot prepare output folder", str(exc))
             return
 
         self.busy = True
