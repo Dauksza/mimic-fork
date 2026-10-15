@@ -109,7 +109,7 @@ class MimicWindowsApp:
 
         self._field(page, "Detected target executable (EXE / DLL)", self.binary_var, 0, self._browse_binary, "Browse EXE")
         self._field(page, "Ghidra installation folder", self.ghidra_var, 1, self._browse_ghidra, "Browse Ghidra")
-        self._model_field(page, row=2, include_url=False)
+        self._model_field(page, row=2, include_url=True)
         self._field(page, "Maximum functions to decompile (0–50000)", self.max_decompile_var, 3)
         self._field(page, "Output reconstruction folder", self.output_var, 4, self._browse_reconstruction_output, "Browse")
         tk.Label(
@@ -390,6 +390,11 @@ class MimicWindowsApp:
             return
         detection = (report or {}).get("detection", {}).get("type", "unknown")
         self._log("Static analysis complete. Detected type: " + detection)
+        availability = (report or {}).get("tool_availability", {})
+        if isinstance(availability, dict):
+            missing = [name for name, details in availability.items() if isinstance(details, dict) and details.get("available") is False]
+            if missing:
+                self._log("Optional analyzers not installed: " + ", ".join(missing))
         self._log("Results saved to: " + str(output))
         if summary_result:
             self._log("Ollama report: " + summary_result["markdown"])
@@ -548,6 +553,7 @@ class MimicWindowsApp:
             messagebox.showwarning("No capture", "Capture a Windows program first.")
             return
         model = self.model_var.get().strip()
+        ollama_url = self.ollama_url_var.get().strip() or None
         output = Path(self.output_var.get()).expanduser()
         try:
             max_decompile = max(0, min(50000, int(self.max_decompile_var.get().strip())))
@@ -590,14 +596,14 @@ class MimicWindowsApp:
                 manifest = reverse_dir / "mimic-analysis-manifest.json"
                 analysis_summary = None
                 try:
-                    analysis_summary = summarize_analysis_manifest(str(manifest), model=model)
+                    analysis_summary = summarize_analysis_manifest(str(manifest), model=model, base_url=ollama_url)
                     self._status_from_worker("Local Ollama has summarized static-analysis findings; reconstructing the UI from all available evidence…")
                 except Exception as summary_error:
                     self._status_from_worker("Analysis summary note: " + str(summary_error)[:260])
                 from .windows_reconstruct import reconstruct_desktop
                 files, notes = reconstruct_desktop(
                     str(capture_dir), str(output), model=model,
-                    static_report=str(manifest),
+                    base_url=ollama_url, static_report=str(manifest),
                 )
                 analyzed = report.get("analysis", {})
                 functions = analyzed.get("total_function_count", analyzed.get("function_count", 0)) if isinstance(analyzed, dict) else 0
