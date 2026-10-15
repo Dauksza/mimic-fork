@@ -342,6 +342,90 @@ def _run_ilspy(binary, output_dir, timeout=900):
     }
 
 
+
+
+def _discover_framework_modules(primary, max_count=8):
+    """Find side-by-side managed apphost assemblies and known app-local payloads."""
+    path = Path(primary).resolve()
+    found = []
+    seen = {str(path).casefold()}
+    companion = path.with_suffix(".dll")
+    if companion.is_file():
+        found.append(companion)
+        seen.add(str(companion).casefold())
+    search_roots = [path.parent]
+    if len(path.parents) > 1:
+        search_roots.append(path.parent.parent)
+    for root in search_roots:
+        try:
+            candidates = root.glob("*_Data/Managed/*.dll")
+            prioritized = []
+            others = []
+            for candidate in candidates:
+                lowered = candidate.name.casefold()
+                if any(term in lowered for term in ("assembly-csharp", "assembly-unityscript", "firstpass", "game")):
+                    prioritized.append(candidate)
+                else:
+                    others.append(candidate)
+            for candidate in prioritized + others:
+                key = str(candidate.resolve()).casefold()
+                if key in seen or not candidate.is_file():
+                    continue
+                seen.add(key)
+                found.append(candidate.resolve())
+                if len(found) >= max_count:
+                    return found
+        except OSError:
+            continue
+    return found[:max_count]
+
+
+def _runtime_layout(primary):
+    """Collect adjacent engine/package markers without executing the program."""
+    path = Path(primary).resolve()
+    root = path.parent
+    markers = []
+    patterns = [
+        "resources/app.asar", "resources/app/package.json", "package.json",
+        "flutter_windows.dll", "icudtl.dat", "data/app.so", "UnityPlayer.dll",
+        "GameAssembly.dll", "global-metadata.dat", "hostfxr.dll", "coreclr.dll",
+        "mono-2.0-bdwgc.dll", "libcef.dll", "Qt6Core.dll", "Qt5Core.dll",
+        "WebView2Loader.dll",
+    ]
+    for relative in patterns:
+        candidate = root / relative
+        if candidate.exists():
+            markers.append({"path": str(candidate.relative_to(root)), "kind": "known-runtime-marker"})
+    try:
+        for candidate in list(root.glob("*.runtimeconfig.json"))[:10]:
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8", errors="replace"))
+                runtime = data.get("runtimeOptions", {})
+                markers.append({
+                    "path": candidate.name,
+                    "kind": ".NET runtime configuration",
+                    "tfm": runtime.get("tfm"),
+                    "framework": runtime.get("framework"),
+                    "frameworks": runtime.get("frameworks"),
+                })
+            except (OSError, json.JSONDecodeError):
+                markers.append({"path": candidate.name, "kind": ".NET runtime config", "parse": "invalid"})
+        for candidate in list(root.glob("*.deps.json"))[:5]:
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8", errors="replace"))
+                markers.append({
+                    "path": candidate.name,
+                    "kind": ".NET dependency manifest",
+                    "runtime_targets": list(data.get("targets", {}).keys())[:10],
+                    "libraries": list(data.get("libraries", {}).keys())[:60],
+                })
+            except (OSError, json.JSONDecodeError):
+                pass
+    except OSError:
+        pass
+    return markers
+
+
 def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=10800,
                         max_decompile=350, max_modules=16, on_status=None):
     """Analyze an EXE and its app-local imported DLLs, including managed .NET code when possible."""
@@ -353,7 +437,17 @@ def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=10800,
     output.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     module_paths, dependency_warnings = _discover_local_dependencies(primary, max_modules=max_modules)
-    binaries = [primary] + module_paths
+    framework_paths = _discover_framework_modules(primary, max_count=min(8, max_modules))
+    ordered_modules = []
+    seen_paths = {str(primary).casefold()}
+    for candidate in framework_paths + module_paths:
+        key = str(candidate.resolve()).casefold()
+        if key not in seen_paths and candidate.is_file():
+            seen_paths.add(key)
+            ordered_modules.append(candidate.resolve())
+        if len(ordered_modules) >= max_modules:
+            break
+    binaries = [primary] + ordered_modules
     module_summaries = []
     reports = []
     managed_summaries = []
@@ -434,10 +528,12 @@ def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=10800,
     )[:20000]
     merged["deep_analysis_completed_at"] = _now()
     merged["analysis_elapsed_seconds"] = round(time.monotonic() - started, 2)
+    merged["runtime_layout_markers"] = _runtime_layout(primary)
     merged["analysis_notes"] = [
         "Ghidra runs its normal auto-analysis on every successfully analyzed PE module.",
         "Complete function, symbol, string, call-reference, and decompilation inventories remain in module-specific JSONL sidecars.",
-        "App-local imported DLLs are recursively discovered from PE import tables, subject to max_modules and the time budget.",
+        "App-local imported DLLs are recursively discovered from PE imports; side-by-side .NET and Unity Managed DLLs receive priority within max_modules.",
+        "Runtime markers detect adjacent Electron ASAR, Unity/IL2CPP, Flutter, WebView2, Qt, and .NET deployment files when present.",
         "Managed .NET code is additionally decompiled with ILSpy when ilspycmd is installed.",
     ] + dependency_warnings
     master_report = output / "ghidra-analysis.json"
