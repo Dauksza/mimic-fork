@@ -140,8 +140,7 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
     ]
     status("Ghidra: analyzing " + binary.name + " with headless static analysis…")
     try:
-        if os.name == "nt":
-            # analyzeHeadless.bat must be invoked via cmd.exe on Windows.
+        if os.name == "nt" and analyzer.suffix.casefold() in {".bat", ".cmd"}:
             command_line = subprocess.list2cmdline(command)
             completed = subprocess.run(
                 ["cmd.exe", "/d", "/s", "/c", command_line], capture_output=True, text=True,
@@ -149,7 +148,13 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         else:
-            raise GhidraError("The desktop Ghidra stage currently targets the Windows analyzeHeadless.bat distribution.")
+            if os.name != "nt" and not os.access(analyzer, os.X_OK):
+                command = ["bash", str(analyzer), *command[1:]]
+            completed = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout, cwd=str(home),
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+            )
     except subprocess.TimeoutExpired as exc:
         raise GhidraError(f"Ghidra analysis exceeded {timeout} seconds. Check its log in {out}.") from exc
     (out / "ghidra-stdout.log").write_text(completed.stdout[-100000:], encoding="utf-8", errors="replace")
