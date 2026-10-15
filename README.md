@@ -1,6 +1,6 @@
 # mimic — local app capture and reconstruction
 
-Mimic records traffic from an app you own or are authorized to test, analyzes the observed API, and can generate either a Python API client or a runnable React/Vite web reconstruction. **All AI generation uses your local Ollama server; there is no cloud AI provider or API key.**
+Mimic can observe an explicitly selected Windows program, run native Ghidra static analysis on its executable, examine visible UI Automation structures and screenshots, and use local Ollama to generate a native desktop reconstruction, web reconstruction, or Python API client. Use it only on software you own or are authorized to analyze. **All AI generation uses your local Ollama server; there is no cloud AI provider or API key.**
 
 It cannot recover the original private source code. It reconstructs observable behavior from captured network requests, responses, and optional screenshots. Better evidence produces a better result; unobserved screens and workflows remain inferred.
 
@@ -10,7 +10,10 @@ It cannot recover the original private source code. It reconstructs observable b
 - **Endpoint inventory:** host, method, path, status, request/response examples.
 - **Python API client:** generated locally with Ollama.
 - **Web app reconstruction:** React/Vite project with navigation, responsive styling, forms, API integration, loading/error/empty states, setup instructions, and a coverage report.
-- **Visual evidence:** supply screenshots; a vision-capable Ollama model can use them to infer layout and styling.
+- **Windows desktop capture:** arm the Mimic observer, open the target program, use it, then stop capture. The selected process's visible UI Automation structure and screenshot changes are recorded.
+- **Ghidra static reverse engineering:** Mimic invokes the installed Ghidra headless analyzer, exports function names, symbols, strings, and selected decompiled functions, then supplies a sanitized summary to local Ollama.
+- **Native Windows UI reconstruction:** generate an editable Python/PySide6 app informed by captured windows, controls, geometry, screenshots, and Ghidra analysis.
+- **Visual evidence:** a locally installed vision-capable Ollama model can analyze screenshots to infer layout and styling.
 - **Safety checks:** generated paths are validated; captured auth headers are not sent as part of the endpoint digest; common token/password fields in captured bodies are redacted; captured credentials are not exported into generated source.
 
 ## Requirements
@@ -37,6 +40,55 @@ Optional live traffic capture:
 ```powershell
 python -m pip install -e ".[capture]"
 ```
+
+## Reconstruct a Windows desktop program
+
+This workflow is designed for a Windows PC. Install Mimic and the Windows capture dependencies:
+
+```powershell
+python -m pip install -e ".[windows]"
+ollama pull qwen2.5-coder:14b
+ollama pull qwen2.5vl:7b
+```
+
+Install Ghidra separately from the official [Ghidra releases](https://github.com/NationalSecurityAgency/ghidra/releases) and extract it. The configured folder must contain `support\\analyzeHeadless.bat`. Set `GHIDRA_HOME` to that folder or select it in the Mimic UI.
+
+Launch Mimic:
+
+```powershell
+mimic-desktop
+```
+
+1. Click **ARM CAPTURE**.
+2. Open the target Windows program after Mimic is armed.
+3. Use the application's normal screens, menus, dialogs, settings, and key workflows with data you are authorized to use.
+4. Click **STOP CAPTURE**.
+5. Click **GENERATE DESKTOP COPY**. Mimic analyzes the target executable with Ghidra first, then uses your local Ollama coding model to generate a PySide6 project.
+
+Captures are stored beneath `%USERPROFILE%\\MimicProjects\\Captures`. The generated project defaults to `%USERPROFILE%\\MimicProjects\\Reconstructions`.
+
+Generated app source is not guaranteed to reproduce hidden server behavior or proprietary logic. The Ghidra project and `ghidra-analysis.json` report are kept in the capture's `reverse-engineering` directory so you can inspect the analysis in Ghidra.
+
+### Command-line desktop reconstruction
+
+After capturing a session, Mimic can do the same Ghidra-plus-Ollama pipeline from a terminal:
+
+```powershell
+mimic-desktop-build "$env:USERPROFILE\\MimicProjects\\Captures\\YOUR_CAPTURE_FOLDER" --out "$env:USERPROFILE\\MimicProjects\\Reconstructions\\my-clone" --ghidra-home "$env:USERPROFILE\\ghidra_XX_PUBLIC" --model qwen2.5-coder:14b --vision-model qwen2.5vl:7b
+cd "$env:USERPROFILE\\MimicProjects\\Reconstructions\\my-clone"
+python -m pip install -r requirements.txt
+python main.py
+```
+
+`--binary C:\\path\\to\\app.exe` can be supplied when the automatic process-to-executable lookup fails. Ghidra must be installed; use `--ghidra-home` to identify its extracted folder.
+
+### What Ghidra contributes
+
+Ghidra imports and analyzes the selected EXE/DLL and exports an inventory of functions, symbols, string constants, and selected decompilation. Mimic gives relevant static-analysis evidence to Ollama alongside captured UI states. This is real static binary analysis, but it cannot guarantee recovery of original source code, runtime-only behavior, server services, encrypted data, or behavior concealed by packers and obfuscation. Generated code is a new reconstruction, not a recovered copy of the original implementation.
+
+### Windows capture limits and privacy
+
+Capture uses Windows UI Automation and screenshots. Interfaces drawn entirely on a custom canvas, protected processes, remote desktop surfaces, and some GPU-rendered apps may expose little UI structure. Edit/document/password values are omitted from the element tree, and Mimic does not install global keyboard hooks or read the clipboard. Screenshots can still show sensitive information; use a clean test account and keep the capture folder private.
 
 ## Reconstruct a web app from a HAR file
 
@@ -94,7 +146,7 @@ No cloud API key is needed or requested.
 
 - A HAR only includes requests made during the captured session. Exercise login, navigation, search, create/edit/delete actions, settings, error cases, and other important flows if you need them reproduced.
 - Screenshots improve visual inference but do not reveal hidden interactions by themselves.
-- The current project generator targets **web apps (React/Vite)**. It does not generate native Android, iOS, or desktop applications.
+- The web generator targets **React/Vite**. The Windows generator creates **native PySide6 desktop UI reconstructions** informed by Ghidra static analysis. Native Android and iOS are not currently generated.
 - Authentication schemes, signed requests, WebSockets, server-side state, anti-bot protections, and APIs unavailable to the capture tool may require additional work.
 - Generated apps are not assumed to be production-ready. Review API calls, authentication, privacy, and permissions before deployment.
 - Captured evidence can contain secrets or personal data. Keep HARs and screenshots private. Redaction catches common token/password patterns but cannot guarantee detection of every secret.
