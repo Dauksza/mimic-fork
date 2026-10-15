@@ -14,7 +14,8 @@ class OllamaError(RuntimeError):
 
 class Ollama:
     def __init__(self, base_url: str | None = None, model: str | None = None, timeout: int = 600):
-        self.base_url = (base_url or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
+        host = (base_url or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434").strip().rstrip("/")
+        self.base_url = host if host.startswith(("http://", "https://")) else "http://" + host
         self.model = model or os.environ.get("MIMIC_OLLAMA_MODEL") or "qwen2.5-coder:14b"
         self.timeout = timeout
 
