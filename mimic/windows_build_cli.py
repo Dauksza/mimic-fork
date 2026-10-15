@@ -6,7 +6,8 @@ import os
 import sys
 from pathlib import Path
 
-from .ghidra import analyze_binary
+from .analyzers import reverse_engineer, summarize_analysis_manifest
+from .ghidra import find_ghidra_home
 from .ollama import OllamaError
 from .windows_reconstruct import reconstruct_desktop
 
@@ -14,7 +15,7 @@ from .windows_reconstruct import reconstruct_desktop
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="mimic-desktop-build",
-        description="Run native Ghidra static analysis, then reconstruct a Windows desktop UI with local Ollama.",
+        description="Run format-aware static analysis, then reconstruct a Windows desktop UI with local Ollama.",
     )
     parser.add_argument("session_dir", help="capture folder containing session.json and events.jsonl")
     parser.add_argument("-o", "--out", required=True, help="new or empty output project directory")
@@ -37,16 +38,28 @@ def main(argv=None):
         if not binary:
             raise ValueError("No executable path found. Supply --binary C:\\path\\to\\program.exe")
         reverse_dir = session_dir / "reverse-engineering"
-        report = analyze_binary(binary, reverse_dir, ghidra_home=args.ghidra_home)
+        report = reverse_engineer(
+            binary, str(reverse_dir), ghidra_home=args.ghidra_home or find_ghidra_home(),
+            on_status=lambda message: print("[mimic] " + str(message), file=sys.stderr, flush=True),
+        )
+        if report.get("analysis_error"):
+            raise RuntimeError(report["analysis_error"])
+        manifest_path = reverse_dir / "mimic-analysis-manifest.json"
+        try:
+            summary = summarize_analysis_manifest(str(manifest_path), model=args.model, base_url=args.ollama_url)
+            print("Static analysis report: " + summary["markdown"])
+        except (OllamaError, OSError, ValueError) as summary_error:
+            print("Static summary unavailable: " + str(summary_error), file=sys.stderr)
         files, notes = reconstruct_desktop(
             str(session_dir), args.out, model=args.model, vision_model=args.vision_model,
-            base_url=args.ollama_url, static_report=str(reverse_dir / "ghidra-analysis.json"),
+            base_url=args.ollama_url, static_report=str(manifest_path),
         )
     except (OllamaError, ValueError, FileExistsError, OSError) as exc:
         print("Desktop reconstruction failed: " + str(exc), file=sys.stderr)
         return 1
-    print("Ghidra analyzed " + str(report.get("analyzed_binary", binary)))
-    print("Functions identified: " + str(report.get("function_count", 0)))
+    print("Analysis target: " + str(report.get("target", binary)))
+    print("Detected app type: " + str(report.get("detection", {}).get("type")))
+    print("Analysis artifacts: " + str(reverse_dir))
     print("Generated " + str(len(files)) + " files in " + args.out)
     for note in notes:
         print("- " + note)
