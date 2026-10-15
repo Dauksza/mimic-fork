@@ -44,6 +44,10 @@ class Ollama:
         result = self._request("/api/tags")
         return [m.get("name", "") for m in result.get("models", []) if m.get("name")]
 
+    def model_info(self, model: str | None = None) -> dict[str, Any]:
+        """Return Ollama model metadata, including capabilities where supported."""
+        return self._request("/api/show", {"name": model or self.model, "verbose": False})
+
     def chat(self, messages: list[dict[str, Any]], *, format: str | dict | None = None,
              temperature: float = 0.15, num_ctx: int = 16384) -> str:
         options = {"temperature": temperature, "num_ctx": num_ctx}
