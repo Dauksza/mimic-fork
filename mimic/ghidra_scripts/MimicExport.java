@@ -97,6 +97,7 @@ public class MimicExport extends GhidraScript {
         File symbolsFile = sidecar(output, "symbols");
         File stringsFile = sidecar(output, "strings");
         File callsFile = sidecar(output, "calls");
+        File referencesFile = sidecar(output, "references");
         File decompiledFile = sidecar(output, "decompiled");
         List<Function> allFunctions = new ArrayList<Function>();
         List<Function> summaryFunctions = new ArrayList<Function>();
@@ -177,14 +178,15 @@ public class MimicExport extends GhidraScript {
 
         int referenceCount = 0;
         int callCount = 0;
-        try (BufferedWriter cw = writer(callsFile)) {
+        try (BufferedWriter cw = writer(callsFile);
+             BufferedWriter rw = writer(referencesFile)) {
             for (Function function : allFunctions) {
                 InstructionIterator instructions = currentProgram.getListing().getInstructions(function.getBody(), true);
                 while (instructions.hasNext()) {
                     Instruction instruction = instructions.next();
                     Reference[] references = instruction.getReferencesFrom();
                     for (Reference reference : references) {
-                        if (reference == null || !reference.getReferenceType().isCall()) continue;
+                        if (reference == null) continue;
                         Address target = reference.getToAddress();
                         Function destination = currentProgram.getFunctionManager().getFunctionContaining(target);
                         String destinationName = destination == null ? "" : destination.getName();
@@ -193,17 +195,22 @@ public class MimicExport extends GhidraScript {
                             + ",\"source_address\":" + json(instruction.getAddress().toString())
                             + ",\"target_address\":" + json(target.toString())
                             + ",\"target_function\":" + json(limited(destinationName, 180))
-                            + ",\"reference_type\":" + json(reference.getReferenceType().toString()) + "}";
-                        cw.write(line);
-                        cw.newLine();
+                            + ",\"reference_type\":" + json(reference.getReferenceType().toString())
+                            + ",\"is_call\":" + reference.getReferenceType().isCall() + "}";
+                        rw.write(line);
+                        rw.newLine();
                         referenceCount++;
-                        callCount++;
+                        if (reference.getReferenceType().isCall()) {
+                            cw.write(line);
+                            cw.newLine();
+                            callCount++;
+                        }
                         if (referenceCount >= 500000) break;
                     }
                     if (referenceCount >= 500000) break;
                 }
                 if (referenceCount >= 500000) break;
-                if (callCount % 5000 == 0) monitor.checkCancelled();
+                if (referenceCount > 0 && referenceCount % 5000 == 0) monitor.checkCancelled();
             }
         }
 
@@ -244,6 +251,7 @@ public class MimicExport extends GhidraScript {
         result.append("\"symbol_count\":").append(symbolCount).append(",\n");
         result.append("\"external_symbol_count\":").append(externalSymbolCount).append(",\n");
         result.append("\"string_count\":").append(stringCount).append(",\n");
+        result.append("\"reference_count\":").append(referenceCount).append(",\n");
         result.append("\"call_reference_count\":").append(callCount).append(",\n");
         result.append("\"decompiled_function_count\":").append(decompiledCount).append(",\n");
         result.append("\"exports\":[\n");
@@ -301,6 +309,7 @@ public class MimicExport extends GhidraScript {
         result.append("\"symbols\":").append(json(symbolsFile.getAbsolutePath())).append(",");
         result.append("\"strings\":").append(json(stringsFile.getAbsolutePath())).append(",");
         result.append("\"calls\":").append(json(callsFile.getAbsolutePath())).append(",");
+        result.append("\"references\":").append(json(referencesFile.getAbsolutePath())).append(",");
         result.append("\"decompiled_functions\":").append(json(decompiledFile.getAbsolutePath()));
         result.append("},\n");
         result.append("\"analysis_note\":").append(json("Ghidra auto-analysis plus full inventories and selected function decompilation. Full inventories are stored as local JSONL sidecars.")).append("\n");
@@ -310,6 +319,6 @@ public class MimicExport extends GhidraScript {
         }
         println("Mimic Ghidra export complete: " + output);
         println("Functions: " + functionCount + "; symbols: " + symbolCount + "; strings: " + stringCount
-            + "; calls: " + callCount + "; decompiled: " + decompiledCount);
+            + "; calls: " + callCount + "; references: " + referenceCount + "; decompiled: " + decompiledCount);
     }
 }
