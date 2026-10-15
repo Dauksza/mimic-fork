@@ -27,6 +27,7 @@ ANDROID_TYPES = {".apk", ".aab", ".aar", ".apkm", ".xapk", ".dex", ".smali"}
 APPLE_TYPES = {".ipa", ".dylib", ".framework", ".bundle"}
 PE_TYPES = {".exe", ".dll", ".ocx", ".sys"}
 NATIVE_TYPES = {".so", ".dylib", ".elf", ".o", ".a", ".bin", ".mach-o"}
+WASM_TYPES = {".wasm", ".wat"}
 JS_TYPES = {".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".html", ".css", ".map"}
 MAX_ARCHIVE_MEMBERS = 100_000
 MAX_MEMBER_BYTES = 1_500_000_000
@@ -158,6 +159,10 @@ def detect_runtime(path):
         return facts
     if ext in JS_TYPES:
         facts["type"] = "javascript_source"
+        return facts
+    if ext in WASM_TYPES:
+        facts["type"] = "wasm_binary" if ext == ".wasm" else "wasm_text"
+        facts["frameworks"].append("WebAssembly")
         return facts
     if ext in PE_TYPES or ext in NATIVE_TYPES or not ext:
         signature = b""
@@ -702,6 +707,52 @@ def _disassemble_pyc(path, output_dir):
             "disassembly": str(output), "note": "Disassembly only; this is not equivalent to recovered source code."}
 
 
+
+def _analyze_wasm(target, out_dir):
+    output = Path(out_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    path = Path(target).resolve()
+    report = {"type": "webassembly", "target": str(path), "tools": {}, "warnings": []}
+    if path.suffix.casefold() != ".wasm":
+        text = path.read_text(encoding="utf-8", errors="replace")
+        report["text_excerpt"] = text[:20000]
+        report["line_count"] = text.count("\n") + 1
+        return report
+    candidates = [
+        ("wasm-tools", ["wasm-tools", "print", str(path)], output / "wasm-tools-print.log"),
+        ("wasm-objdump", ["wasm-objdump", "-x", "-d", str(path)], output / "wasm-objdump.log"),
+    ]
+    for name, command, log_path in candidates:
+        executable = shutil.which(name) or shutil.which(name + ".exe")
+        if not executable:
+            report["tools"][name] = {"available": False, "status": "missing"}
+            continue
+        command[0] = executable
+        report["tools"][name] = _run_tool(command, log_path, 1800)
+    wasm2wat = shutil.which("wasm2wat") or shutil.which("wasm2wat.exe")
+    if wasm2wat:
+        wat_out = output / (path.stem + ".wat")
+        report["tools"]["wasm2wat"] = _run_tool(
+            [wasm2wat, str(path), "-o", str(wat_out)], output / "wasm2wat.log", 1800
+        )
+    decompiler = shutil.which("wasm-decompile") or shutil.which("wasm-decompile.exe")
+    if decompiler:
+        decompile_out = output / (path.stem + ".decompiled.txt")
+        report["tools"]["wasm-decompile"] = _run_tool(
+            [decompiler, str(path), "-o", str(decompile_out)], output / "wasm-decompile.log", 1800
+        )
+    completed = [name for name, item in report["tools"].items() if item.get("status") == "ok"]
+    if not completed:
+        report["warnings"].append(
+            "No WebAssembly tool completed. Install wasm-tools, WABT (wasm2wat/wasm-objdump), or wasm-decompile locally and put it on PATH."
+        )
+    report["analysis_note"] = (
+        "Static Wasm imports, exports, names and instructions are analyzed where tools are installed. "
+        "Original high-level source cannot be recovered if source maps/debug info were not shipped."
+    )
+    return report
+
+
 def _analyze_python(target, out_dir):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -963,6 +1014,8 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
             report["analysis"] = _analyze_source(target_path, output / "source-analysis")
         elif detection["type"] == "python":
             report["analysis"] = _analyze_python(target_path, output / "python-analysis")
+        elif detection["type"] in {"wasm_binary", "wasm_text"}:
+            report["analysis"] = _analyze_wasm(target_path, output / "wasm-analysis")
         elif detection["type"] == "windows_application_folder":
             report["analysis"] = _analyze_windows_folder(target_path, output / "folder-analysis", ghidra_home, status)
         elif detection["type"] == "source_archive":
