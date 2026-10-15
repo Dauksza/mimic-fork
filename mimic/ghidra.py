@@ -77,7 +77,7 @@ def _safe_project_name(path):
     return (stem or "MimicBinary")[:50] + "_Mimic"
 
 
-def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_decompile=600, per_function_timeout=8, on_status=None):
+def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_decompile=1000, per_function_timeout=8, on_status=None):
     """Run Ghidra headless analysis on a PE, ELF, Mach-O, or raw native binary."""
     status = on_status or (lambda message: None)
     binary = Path(binary_path).expanduser().resolve()
@@ -427,7 +427,7 @@ def _runtime_layout(primary):
 
 
 def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=14400,
-                        max_decompile=600, max_modules=16, on_status=None):
+                        max_decompile=1000, max_modules=16, on_status=None):
     """Analyze an EXE and its app-local imported DLLs, including managed .NET code when possible."""
     status = on_status or (lambda message: None)
     primary = Path(binary_path).expanduser().resolve()
