@@ -314,14 +314,21 @@ class MimicWindowsApp:
                 self.model_var.set(preferred)
 
     def _browse_analysis_file(self):
-        path = filedialog.askopenfilename(title="Choose a target application or package",
-                                          filetypes=[("All files", "*.*")])
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Choose a target application or package",
+            filetypes=[("All files", "*.*")]
+        )
         if path:
             self.analysis_target_var.set(path)
             self._suggest_analysis_output(path)
 
     def _browse_analysis_folder(self):
-        path = filedialog.askdirectory(title="Choose an application installation or source folder")
+        path = filedialog.askdirectory(
+            parent=self.root,
+            title="Choose an application installation or source folder",
+            mustexist=True,
+        )
         if path:
             self.analysis_target_var.set(path)
             self._suggest_analysis_output(path)
@@ -333,12 +340,16 @@ class MimicWindowsApp:
         self.analysis_output_var.set(str(Path.home() / "MimicProjects" / "Analyses" / ((name or "app") + "-analysis")))
 
     def _browse_analysis_output(self):
-        path = filedialog.askdirectory(title="Choose analysis results folder")
+        path = filedialog.askdirectory(
+            parent=self.root, title="Choose analysis results folder", mustexist=True
+        )
         if path:
             self.analysis_output_var.set(path)
 
     def _browse_reconstruction_output(self):
-        path = filedialog.askdirectory(title="Choose desktop reconstruction output folder")
+        path = filedialog.askdirectory(
+            parent=self.root, title="Choose desktop reconstruction output folder", mustexist=True
+        )
         if path:
             self.output_var.set(path)
 
@@ -603,6 +614,7 @@ class MimicWindowsApp:
 
     def _browse_binary(self):
         path = filedialog.askopenfilename(
+            parent=self.root,
             title="Choose the original executable",
             filetypes=[("Windows executables and libraries", "*.exe *.dll *.ocx *.sys"), ("All files", "*.*")]
         )
@@ -610,9 +622,19 @@ class MimicWindowsApp:
             self.binary_var.set(path)
 
     def _browse_ghidra(self):
-        path = filedialog.askdirectory(title="Choose the extracted Ghidra installation folder")
+        # Keep the native Windows folder chooser owned by Mimic so it cannot
+        # open behind the main window and make the application appear frozen.
+        current = Path(self.ghidra_var.get().strip()).expanduser()
+        initialdir = current if current.is_dir() else Path.home()
+        path = filedialog.askdirectory(
+            parent=self.root,
+            title="Choose the extracted Ghidra installation folder",
+            initialdir=str(initialdir),
+            mustexist=True,
+        )
         if path:
             self.ghidra_var.set(path)
+            self._log("Ghidra folder selected: " + path)
 
     def _build(self):
         if self.busy:
