@@ -451,18 +451,27 @@ def _analyze_apple(target, out_dir, ghidra_home, status):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {"type": "apple_package", "target": str(target), "warnings": []}
-    candidate = Path(target)
+    candidate = Path(target).expanduser().resolve()
     if candidate.is_file() and candidate.suffix.casefold() == ".ipa":
         bundle_dir = output / "ipa-extracted"
-        extracted = _safe_extract_members(
-            candidate, bundle_dir,
-            lambda name: name.startswith("Payload/") and (
-                name.endswith("/Info.plist") or
-                name.endswith("/PkgInfo") or
-                Path(name).suffix.casefold() in {".dylib", ".framework", ".bundle"}
-            ),
-        )
+
+        def apple_member(name):
+            normalized = name.replace("\\", "/")
+            if not normalized.startswith("Payload/"):
+                return False
+            basename = normalized.rsplit("/", 1)[-1]
+            suffix = Path(basename).suffix.casefold()
+            if basename == "Info.plist" or basename == "PkgInfo":
+                return True
+            if suffix in {".dylib", ".plist", ".strings", ".storyboardc", ".nib", ".car", ".metallib"}:
+                return True
+            if "/Frameworks/" in normalized and "." not in basename and basename not in {"_CodeSignature"}:
+                return True
+            return False
+
+        extracted = _safe_extract_members(candidate, bundle_dir, apple_member, max_total=MAX_TOTAL_EXTRACT_BYTES)
         plists = [Path(name) for name in extracted if Path(name).name == "Info.plist"]
+        primary_binary = None
         if plists:
             import plistlib
             try:
@@ -471,44 +480,103 @@ def _analyze_apple(target, out_dir, ghidra_home, status):
                 executable = info.get("CFBundleExecutable")
                 report["bundle_identifier"] = info.get("CFBundleIdentifier")
                 report["bundle_name"] = info.get("CFBundleName") or info.get("CFBundleDisplayName")
-                binary = plists[0].parent / executable if executable else None
-                # Extract the app executable separately, using a path derived only from the plist's basename.
-                if binary and not binary.is_file():
-                    path_inside = str(plists[0].relative_to(bundle_dir).parent / executable).replace("\\", "/")
-                    extracted_exec = _safe_extract_members(
-                        candidate, bundle_dir,
-                        lambda name: name == path_inside,
-                        max_members=1, max_total=2_000_000_000,
-                    )
-                    binary = Path(extracted_exec[0]) if extracted_exec else None
-                if binary and binary.is_file():
-                    report["executable_path"] = str(binary)
+                relative_root = plists[0].relative_to(bundle_dir).parent
+                relative_binary = relative_root / executable if executable else None
+                if relative_binary:
+                    primary_binary = bundle_dir / relative_binary
+                    if not primary_binary.is_file():
+                        name_inside_archive = str(relative_binary).replace("\\", "/")
+                        items = _safe_extract_members(
+                            candidate, bundle_dir, lambda name: name == name_inside_archive,
+                            max_members=1, max_total=2_000_000_000,
+                        )
+                        if items:
+                            primary_binary = Path(items[0])
+                if primary_binary and primary_binary.is_file():
+                    report["executable_path"] = str(primary_binary)
                     try:
                         report["native_analysis"] = analyze_binary(
-                            str(binary), str(output / "ghidra-native"), ghidra_home=ghidra_home,
-                            max_decompile=150, on_status=status,
+                            str(primary_binary), str(output / "ghidra-native"),
+                            ghidra_home=ghidra_home, max_decompile=250, on_status=status,
                         )
                     except GhidraError as exc:
-                        report["warnings"].append("Ghidra could not analyze iOS Mach-O in this environment: " + str(exc))
-            except (OSError, ValueError, Exception) as exc:
+                        report["warnings"].append("Ghidra could not analyze the main Mach-O executable: " + str(exc))
+            except Exception as exc:
                 report["warnings"].append("Could not fully analyze IPA bundle metadata: " + str(exc)[:400])
+        native_binaries = [
+            Path(name) for name in extracted
+            if Path(name).is_file()
+            and "/Frameworks/" in str(Path(name)).replace("\\", "/")
+            and (Path(name).suffix.casefold() == ".dylib" or "." not in Path(name).name)
+            and (primary_binary is None or Path(name).resolve() != primary_binary.resolve())
+        ]
+        native_reports = []
+        if find_ghidra_home(ghidra_home):
+            for index, binary in enumerate(native_binaries[:12]):
+                try:
+                    native_reports.append(analyze_binary(
+                        str(binary), str(output / "ghidra-frameworks" / f"{index:02d}_{binary.stem[:50]}"),
+                        ghidra_home=ghidra_home, max_decompile=100, on_status=status,
+                    ))
+                except GhidraError as exc:
+                    report["warnings"].append("Framework binary analysis failed for " + binary.name + ": " + str(exc)[:200])
+        report["framework_binary_count"] = len(native_binaries)
+        report["framework_analyses"] = [
+            {"program_name": item.get("program_name"), "function_count": item.get("function_count"),
+             "string_count": item.get("string_count"), "decompiled_function_count": item.get("decompiled_function_count")}
+            for item in native_reports
+        ]
         report["package_inventory"] = _archive_inventory(candidate)
         return report
     if candidate.is_dir():
-        plist = candidate / "Contents" / "Info.plist"
-        if not plist.is_file():
-            plist = candidate / "Info.plist"
-        if plist.is_file():
+        plist_paths = [
+            candidate / "Contents" / "Info.plist",
+            candidate / "Info.plist",
+            candidate / "Resources" / "Info.plist",
+        ]
+        plist = next((path for path in plist_paths if path.is_file()), None)
+        if plist:
             import plistlib
             try:
                 info = plistlib.loads(plist.read_bytes())
                 report["bundle_identifier"] = info.get("CFBundleIdentifier")
-                report["bundle_name"] = info.get("CFBundleName")
+                report["bundle_name"] = info.get("CFBundleName") or info.get("CFBundleDisplayName")
+                executable = info.get("CFBundleExecutable")
+                executable_candidates = [
+                    plist.parent / "MacOS" / executable,
+                    plist.parent.parent / "MacOS" / executable,
+                    candidate / executable,
+                ] if executable else []
+                binary = next((path for path in executable_candidates if path and path.is_file()), None)
+                if binary:
+                    report["executable_path"] = str(binary)
+                    report["native_analysis"] = analyze_binary(
+                        str(binary), str(output / "ghidra-native"), ghidra_home=ghidra_home,
+                        max_decompile=250, on_status=status,
+                    )
             except Exception as exc:
-                report["warnings"].append(str(exc)[:200])
-    if candidate.is_file() and candidate.suffix.casefold() in {".dylib", ".so"}:
-        report["native_analysis"] = analyze_binary(str(candidate), str(output / "ghidra-native"), ghidra_home=ghidra_home, max_decompile=150, on_status=status)
-    report["source_inventory"] = _source_inventory(candidate, max_files=8000) if candidate.is_dir() else None
+                report["warnings"].append("Bundle plist or binary analysis failed: " + str(exc)[:400])
+        dylibs = [path for path in candidate.rglob("*") if path.is_file() and path.suffix.casefold() in {".dylib", ".so"}][:12]
+        if dylibs and find_ghidra_home(ghidra_home):
+            report["framework_analyses"] = []
+            for index, binary in enumerate(dylibs):
+                try:
+                    result = analyze_binary(str(binary), str(output / "ghidra-frameworks" / f"{index:02d}_{binary.stem[:50]}"),
+                                            ghidra_home=ghidra_home, max_decompile=75, on_status=status)
+                    report["framework_analyses"].append({
+                        "binary": str(binary), "function_count": result.get("function_count"),
+                        "string_count": result.get("string_count"),
+                    })
+                except GhidraError as exc:
+                    report["warnings"].append("Framework analysis failed for " + binary.name + ": " + str(exc)[:250])
+        report["source_inventory"] = _source_inventory(candidate, max_files=10000)
+        return report
+    if candidate.is_file() and candidate.suffix.casefold() in {".dylib", ".so"} or candidate.is_file() and not candidate.suffix:
+        report["native_analysis"] = analyze_binary(
+            str(candidate), str(output / "ghidra-native"), ghidra_home=ghidra_home,
+            max_decompile=250, on_status=status,
+        )
+    report["source_inventory"] = None
     return report
 
 
