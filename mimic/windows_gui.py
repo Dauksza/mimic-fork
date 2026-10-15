@@ -196,6 +196,15 @@ class MimicWindowsApp:
             self.arm_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
             return
+        if self.runtime_trace_var.get():
+            try:
+                self.runtime_trace = RuntimeTrace(
+                    target["pid"], self.capture_dir / "runtime-events.jsonl",
+                    on_status=self._status_from_worker,
+                ).start()
+            except RuntimeTraceError as exc:
+                self.runtime_trace = None
+                self._log("Runtime trace was not started: " + str(exc))
         project_name = self.capture_dir.name + "-clone"
         self.output_var.set(str(Path.home() / "MimicProjects" / "Reconstructions" / project_name))
         self._log("Capture active. Exercise distinct pages, menus, dialogs, settings, and normal workflows. Visible private data may appear in screenshots.")
@@ -204,16 +213,21 @@ class MimicWindowsApp:
         if self.discovery_stopped:
             self.discovery_stopped.set()
         active = self.capture
+        trace = self.runtime_trace
         self.capture = None
+        self.runtime_trace = None
         self.discovery = None
         self.discovery_stopped = None
         self.stop_button.configure(state="disabled")
         self.arm_button.configure(state="disabled")
         self.build_button.configure(state="disabled")
-        if active:
-            self._log("Stopping capture and flushing events to disk…")
+        if active or trace:
+            self._log("Stopping capture, flushing UI events, and detaching runtime instrumentation…")
             def finish_capture():
-                active.stop()
+                if active:
+                    active.stop()
+                if trace:
+                    trace.stop()
                 try:
                     self.root.after(0, self._capture_stopped)
                 except tk.TclError:
@@ -325,15 +339,17 @@ class MimicWindowsApp:
             messagebox.showerror("Build failed", message)
 
     def _close(self):
-        if self.capture or self.discovery:
-            if not messagebox.askyesno("Stop capture?", "Stop the active capture and close Mimic?"):
+        if self.capture or self.discovery or self.runtime_trace:
+            if not messagebox.askyesno("Stop capture?", "Stop the active UI capture/runtime trace and close Mimic?"):
                 return
             if self.discovery_stopped:
                 self.discovery_stopped.set()
             if self.capture:
-                active = self.capture
+                self.capture.stop()
                 self.capture = None
-                active.stop()
+            if self.runtime_trace:
+                self.runtime_trace.stop()
+                self.runtime_trace = None
         self.root.destroy()
 
 
