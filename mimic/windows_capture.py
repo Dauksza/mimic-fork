@@ -232,6 +232,8 @@ class CaptureSession:
         self._thread = None
         self._last_signature = None
         self._last_image_hash = None
+        self._last_image_time = 0.0
+        self._image_count = 0
         self._sequence = 0
 
     def start(self):
