@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .ghidra import find_ghidra_home
 from .analyzers import reverse_engineer, summarize_analysis_manifest
+from .runtime_trace import RuntimeTrace, RuntimeTraceError
 from .windows_capture import (
     CaptureSession,
     WindowsCaptureError,
@@ -28,6 +29,8 @@ class MimicWindowsApp:
         self.root.minsize(850, 720)
         self.root.configure(bg="#0b1220")
         self.capture = None
+        self.runtime_trace = None
+        self.runtime_trace_var = tk.BooleanVar(value=False)
         self.discovery = None
         self.discovery_stopped = None
         self.capture_dir = None
@@ -67,6 +70,14 @@ class MimicWindowsApp:
         )
         tk.Label(body, text=instructions, justify="left", wraplength=930, fg="#a9bad3",
                  bg="#0b1220", font=("Segoe UI", 10), pady=9).pack(anchor="w")
+        tk.Checkbutton(
+            body,
+            text="Advanced runtime trace via Frida (modules, file/registry paths and connection destinations; no payloads)",
+            variable=self.runtime_trace_var,
+            bg="#0b1220", fg="#c5d1e5", selectcolor="#132238",
+            activebackground="#0b1220", activeforeground="#75e0d0",
+            font=("Segoe UI", 9), anchor="w",
+        ).pack(anchor="w", pady=(0, 8))
 
         buttons = tk.Frame(body, bg="#0b1220")
         buttons.pack(fill="x", pady=(4, 10))
@@ -131,11 +142,15 @@ class MimicWindowsApp:
     def _arm(self):
         if self.capture or self.discovery or self.busy:
             return
+        trace_notice = (
+            "\n\nThe optional Frida trace will attach to the detected process and record selected module, file-path, registry-path, and connection-destination metadata. It may affect app stability."
+            if self.runtime_trace_var.get() else ""
+        )
         confirmed = messagebox.askyesno(
             "Arm desktop observation",
             "Mimic will observe the next visible Windows program window and save its UI structure and up to 240 screenshots.\n\n"
-            "Screenshots can contain confidential information. Close sensitive windows and use a test account.\n\n"
-            "Proceed with local capture on this PC?"
+            "Screenshots can contain confidential information. Close sensitive windows and use a test account."
+            + trace_notice + "\n\nProceed with local capture on this PC?"
         )
         if not confirmed:
             return
