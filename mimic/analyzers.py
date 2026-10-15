@@ -177,6 +177,10 @@ def detect_runtime(path):
             facts["frameworks"].append("Windows installer bundle")
             facts["confidence"] = "medium"
             return facts
+        if "PyInstaller" in facts["frameworks"]:
+            facts["type"] = "python_frozen"
+            facts["confidence"] = "high"
+            return facts
         if ext in PE_TYPES:
             facts["type"] = "windows_binary"
             facts["confidence"] = "high"
@@ -553,10 +557,36 @@ def _analyze_jvm(target, out_dir, status):
     if Path(target).suffix.casefold() == ".jar":
         javap = shutil.which("javap") or shutil.which("javap.exe")
         if javap:
-            report["tools"]["javap"] = _run_tool([javap, "-classpath", str(target), "-verbose", "-private"],
-                                                 output / "javap.log", 900)
+            classes = []
+            try:
+                with zipfile.ZipFile(target) as archive:
+                    for info in archive.infolist():
+                        name = info.filename
+                        if name.endswith(".class") and not name.startswith("META-INF/versions/"):
+                            classname = name[:-6].replace("/", ".").replace("\\", ".")
+                            if not classname.endswith(("module-info", "package-info")):
+                                classes.append(classname)
+                        if len(classes) >= 30:
+                            break
+            except (OSError, zipfile.BadZipFile):
+                classes = []
+            class_reports = []
+            for classname in classes[:25]:
+                item = _run_tool(
+                    [javap, "-classpath", str(Path(target).resolve()), "-private", "-c", "-s", classname],
+                    output / "javap" / (re.sub(r"[^A-Za-z0-9_.-]+", "_", classname)[:100] + ".log"),
+                    180,
+                )
+                item["class"] = classname
+                class_reports.append(item)
+            report["tools"]["javap"] = {
+                "available": True,
+                "status": "ok" if any(item.get("status") == "ok" for item in class_reports) else "error",
+                "class_count_attempted": len(class_reports),
+                "classes": class_reports,
+            }
         else:
-            report["warnings"].append("javap not found; JADX is used for bytecode decompilation.")
+            report["warnings"].append("javap not found; install a JDK for additional JVM bytecode and descriptor output.")
     return report
 
 
