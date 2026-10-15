@@ -77,7 +77,7 @@ def _safe_project_name(path):
     return (stem or "MimicBinary")[:50] + "_Mimic"
 
 
-def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=5400, max_decompile=350, per_function_timeout=12, on_status=None):
+def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_decompile=600, per_function_timeout=8, on_status=None):
     """Run Ghidra headless analysis on a PE, ELF, Mach-O, or raw native binary."""
     status = on_status or (lambda message: None)
     binary = Path(binary_path).expanduser().resolve()
@@ -426,8 +426,8 @@ def _runtime_layout(primary):
     return markers
 
 
-def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=10800,
-                        max_decompile=350, max_modules=16, on_status=None):
+def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=14400,
+                        max_decompile=600, max_modules=16, on_status=None):
     """Analyze an EXE and its app-local imported DLLs, including managed .NET code when possible."""
     status = on_status or (lambda message: None)
     primary = Path(binary_path).expanduser().resolve()
@@ -465,9 +465,9 @@ def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=10800,
         try:
             report = analyze_binary(
                 binary, module_dir, ghidra_home=ghidra_home,
-                timeout=int(min(5400 if index == 0 else 1800, remaining)),
+                timeout=int(min(7200 if index == 0 else 2400, remaining)),
                 max_decompile=max_decompile if index == 0 else min(max_decompile, 100),
-                per_function_timeout=12,
+                per_function_timeout=8,
                 on_status=status,
             )
         except GhidraError as exc:
