@@ -159,7 +159,17 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
                 for fn in raw_report.get("decompiled_functions", [])[:6]
             ],
         }
-        notes.append("Ghidra static reverse engineering imported: " + str(ghidra_spec.get("function_count", 0)) + " functions found.")
+        notes.append("Static reverse engineering imported: " + str(ghidra_spec.get("function_count", 0)) + " functions found.")
+        if isinstance(raw_report.get("analysis"), dict):
+            ghidra_spec["application_type"] = raw_report.get("detection", {}).get("type")
+            ghidra_spec["frameworks"] = raw_report.get("detection", {}).get("frameworks", [])
+            ghidra_spec["modules"] = analysis_report.get("modules", [])[:20]
+        summary_path = report_path.parent / "ollama-analysis-summary.json"
+        if summary_path.is_file():
+            try:
+                ghidra_spec["prior_ollama_findings"] = json.loads(summary_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
     vision_client = Ollama(base_url=base_url, model=vision_model)
     vision_available = vision_client.models()
     if screenshots and supports_vision(vision_client, vision_model, vision_available):
