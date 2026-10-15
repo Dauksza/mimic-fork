@@ -149,7 +149,7 @@ hook(winModules, 'CreateProcessW', function(args) {
   // Deliberately do not read lpCommandLine; it can include passwords or tokens.
   if (application) record('process_launch_attempt', {application: application});
 });
-
+"""
 
 
 class RuntimeTrace:
