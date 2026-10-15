@@ -292,12 +292,20 @@ class CaptureSession:
                     image_hash = hashlib.sha256(image_data).hexdigest() if image_data else None
                     tree_changed = signature != self._last_signature
                     image_changed = image_hash is not None and image_hash != self._last_image_hash
-                    if tree_changed or image_changed:
+                    now_monotonic = time.monotonic()
+                    visual_due = (
+                        image_changed and self._image_count < 240
+                        and now_monotonic - self._last_image_time >= 2.0
+                    )
+                    if tree_changed or visual_due:
                         self._sequence += 1
                         snapshot["sequence"] = self._sequence
-                        if image_data and image_changed:
+                        capture_screen = bool(image_data and self._image_count < 240 and image_changed)
+                        if capture_screen:
                             self._last_image_hash = image_hash
-                            file_name = f"screen_{self._sequence:05d}.jpg"
+                            self._image_count += 1
+                            self._last_image_time = now_monotonic
+                            file_name = f"screen_{self._image_count:05d}.jpg"
                             (screenshots_dir / file_name).write_bytes(image_data)
                             snapshot["screenshot"] = "screenshots/" + file_name
                         else:
