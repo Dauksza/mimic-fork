@@ -23,7 +23,7 @@ def main(argv=None):
     parser.add_argument("--ghidra-home", default=os.environ.get("GHIDRA_HOME"),
                         help="Ghidra installation folder containing support/analyzeHeadless (or analyzeHeadless.bat on Windows)")
     parser.add_argument("--max-decompile", type=int, default=int(os.environ.get("MIMIC_GHIDRA_MAX_DECOMPILE", "1000")),
-                        help="maximum decompiled functions per primary binary (0-5000; higher takes longer)")
+                        help="maximum decompiled functions per primary binary (0-50000; higher takes longer)")
     parser.add_argument("--model", default=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"),
                         help="installed local Ollama coding model")
     parser.add_argument("--vision-model", default=os.environ.get("MIMIC_OLLAMA_VISION_MODEL", "qwen2.5vl:7b"),
@@ -42,7 +42,7 @@ def main(argv=None):
         reverse_dir = session_dir / "reverse-engineering"
         report = reverse_engineer(
             binary, str(reverse_dir), ghidra_home=args.ghidra_home or find_ghidra_home(),
-            max_decompile=max(0, min(5000, args.max_decompile)),
+            max_decompile=max(0, min(50000, args.max_decompile)),
             on_status=lambda message: print("[mimic] " + str(message), file=sys.stderr, flush=True),
         )
         if report.get("analysis_error"):
