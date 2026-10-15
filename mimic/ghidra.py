@@ -151,3 +151,295 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=1800, on_stat
         f"{len(report.get('strings', []))} strings extracted."
     )
     return report
+
+
+
+def _pe_metadata(binary_path):
+    """Return PE header/import/export metadata used to locate app-local dependencies."""
+    binary = Path(binary_path).resolve()
+    metadata = {
+        "path": str(binary),
+        "sha256": None,
+        "managed_dotnet": False,
+        "imports": [],
+        "exports": [],
+        "sections": [],
+        "parse_warning": None,
+    }
+    try:
+        import hashlib
+        digest = hashlib.sha256()
+        with binary.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        metadata["sha256"] = digest.hexdigest()
+    except OSError:
+        pass
+    try:
+        import pefile
+    except ImportError:
+        metadata["parse_warning"] = "pefile is not installed. Reinstall Windows dependencies to enable dependency enumeration."
+        return metadata
+
+    try:
+        pe = pefile.PE(str(binary), fast_load=True)
+        wanted = [
+            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"],
+            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"],
+            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DEBUG"],
+            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"],
+            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"],
+            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_TLS"],
+        ]
+        pe.parse_data_directories(directories=wanted)
+        metadata.update({
+            "machine": hex(pe.FILE_HEADER.Machine),
+            "machine_name": {
+                0x14c: "x86",
+                0x8664: "x64",
+                0xaa64: "ARM64",
+                0x1c4: "ARM",
+            }.get(pe.FILE_HEADER.Machine, "unknown"),
+            "subsystem": int(pe.OPTIONAL_HEADER.Subsystem),
+            "image_base": hex(pe.OPTIONAL_HEADER.ImageBase),
+            "entry_point_rva": hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint),
+            "section_count": len(pe.sections),
+        })
+        try:
+            directory_index = pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR"]
+            metadata["managed_dotnet"] = bool(pe.OPTIONAL_HEADER.DATA_DIRECTORY[directory_index].VirtualAddress)
+        except Exception:
+            pass
+        for section in pe.sections[:128]:
+            name = section.Name.rstrip(b"\\x00").decode("ascii", errors="replace")
+            metadata["sections"].append({
+                "name": name,
+                "virtual_size": int(section.Misc_VirtualSize),
+                "raw_size": int(section.SizeOfRawData),
+                "entropy": round(section.get_entropy(), 3),
+                "characteristics": hex(section.Characteristics),
+            })
+        import_entries = getattr(pe, "DIRECTORY_ENTRY_IMPORT", [])
+        for entry in import_entries:
+            dll = entry.dll.decode("utf-8", errors="replace") if isinstance(entry.dll, bytes) else str(entry.dll)
+            functions = []
+            for symbol in entry.imports[:300]:
+                name = symbol.name.decode("utf-8", errors="replace") if symbol.name else None
+                functions.append({"name": name, "ordinal": symbol.ordinal, "address": hex(symbol.address)})
+            metadata["imports"].append({"dll": dll, "symbols": functions, "symbol_count": len(entry.imports)})
+        delay_entries = getattr(pe, "DIRECTORY_ENTRY_DELAY_IMPORT", [])
+        for entry in delay_entries:
+            dll = entry.dll.decode("utf-8", errors="replace") if isinstance(entry.dll, bytes) else str(entry.dll)
+            metadata["imports"].append({"dll": dll, "delay_load": True, "symbols": []})
+        export_entries = getattr(getattr(pe, "DIRECTORY_ENTRY_EXPORT", None), "symbols", [])
+        for item in export_entries[:2000]:
+            name = item.name.decode("utf-8", errors="replace") if item.name else None
+            metadata["exports"].append({"name": name, "ordinal": item.ordinal, "address_rva": hex(item.address)})
+        pe.close()
+    except Exception as exc:
+        metadata["parse_warning"] = str(exc)[:600]
+    return metadata
+
+
+def _discover_local_dependencies(binary_path, max_modules=16):
+    """Follow PE import tables, resolving only DLLs beside the app binaries."""
+    primary = Path(binary_path).expanduser().resolve()
+    folder = primary.parent
+    try:
+        import pefile
+    except ImportError:
+        return [], ["Install pefile to discover app-local DLL dependencies automatically."]
+    found = []
+    visited = {str(primary).casefold()}
+    queue = [primary]
+    warnings = []
+    while queue and len(found) < max_modules:
+        current = queue.pop(0)
+        try:
+            pe = pefile.PE(str(current), fast_load=True)
+            dirs = [pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]]
+            try:
+                dirs.append(pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"])
+            except Exception:
+                pass
+            pe.parse_data_directories(directories=dirs)
+            entries = list(getattr(pe, "DIRECTORY_ENTRY_IMPORT", []))
+            entries += list(getattr(pe, "DIRECTORY_ENTRY_DELAY_IMPORT", []))
+            for entry in entries:
+                raw = entry.dll
+                dll_name = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+                if Path(dll_name).name != dll_name:
+                    continue
+                local = (current.parent / dll_name).resolve()
+                key = str(local).casefold()
+                if key in visited or not local.is_file() or local.suffix.casefold() != ".dll":
+                    continue
+                visited.add(key)
+                found.append(local)
+                queue.append(local)
+                if len(found) >= max_modules:
+                    break
+            pe.close()
+        except Exception as exc:
+            warnings.append("Dependency enumeration warning for " + current.name + ": " + str(exc)[:180])
+    if queue:
+        warnings.append("Dependency limit reached; increase max_modules to analyze more app-local DLLs.")
+    return found, warnings
+
+
+def _run_ilspy(binary, output_dir, timeout=900):
+    """Optionally decompile managed .NET assemblies if ILSpy command line is installed."""
+    command = shutil.which("ilspycmd")
+    if not command:
+        return {
+            "available": False,
+            "status": "skipped",
+            "note": "A .NET assembly was detected, but ilspycmd was not found. Install it with: dotnet tool install --global ilspycmd",
+            "source_dir": None,
+            "files": [],
+            "source_excerpt": "",
+        }
+    target = Path(output_dir).resolve()
+    if target.exists() and any(target.iterdir()):
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    try:
+        process = subprocess.run(
+            [command, "-p", "-o", str(target), str(Path(binary).resolve())],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "available": True, "status": "timeout", "source_dir": str(target),
+            "files": [], "source_excerpt": "",
+            "note": "ILSpy command-line decompilation timed out. Inspect the module folder for partial output.",
+        }
+    (target / "ilspy-stdout.log").write_text(process.stdout[-30000:], encoding="utf-8", errors="replace")
+    (target / "ilspy-stderr.log").write_text(process.stderr[-30000:], encoding="utf-8", errors="replace")
+    source_files = sorted(target.rglob("*.cs"))[:1000]
+    excerpt_parts = []
+    for path in source_files:
+        try:
+            relative = str(path.relative_to(target))
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        excerpt_parts.append("// SOURCE FILE: " + relative + "\\n" + text[:12000])
+        if sum(map(len, excerpt_parts)) >= 100000:
+            break
+    return {
+        "available": True,
+        "status": "ok" if process.returncode == 0 else "error",
+        "exit_code": process.returncode,
+        "source_dir": str(target),
+        "files": [str(p.relative_to(target)) for p in source_files],
+        "source_excerpt": "\\n\\n".join(excerpt_parts)[:100000],
+        "note": "Managed source was decompiled by ILSpy; inspect source project in this folder.",
+    }
+
+
+def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=10800,
+                        max_decompile=350, max_modules=16, on_status=None):
+    """Analyze an EXE and its app-local imported DLLs, including managed .NET code when possible."""
+    status = on_status or (lambda message: None)
+    primary = Path(binary_path).expanduser().resolve()
+    if not primary.is_file():
+        raise GhidraError("The target executable does not exist: " + str(primary))
+    output = Path(out_dir).expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    module_paths, dependency_warnings = _discover_local_dependencies(primary, max_modules=max_modules)
+    binaries = [primary] + module_paths
+    module_summaries = []
+    reports = []
+    managed_summaries = []
+    for index, binary in enumerate(binaries):
+        remaining = timeout - (time.monotonic() - started)
+        if remaining < 90:
+            dependency_warnings.append("Overall analysis time budget reached; remaining modules were not analyzed.")
+            break
+        module_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", binary.stem)[:70] or "module"
+        module_dir = output / "modules" / (f"{index:02d}_{module_key}")
+        metadata = _pe_metadata(binary)
+        (module_dir).mkdir(parents=True, exist_ok=True)
+        (module_dir / "pe-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        status(f"Ghidra module {index + 1}/{len(binaries)}: {binary.name} ({metadata.get('machine_name', 'PE')})")
+        try:
+            report = analyze_binary(
+                binary, module_dir, ghidra_home=ghidra_home,
+                timeout=int(min(5400 if index == 0 else 1800, remaining)),
+                max_decompile=max_decompile if index == 0 else min(max_decompile, 100),
+                per_function_timeout=12,
+                on_status=status,
+            )
+        except GhidraError as exc:
+            if index == 0:
+                raise
+            dependency_warnings.append("Ghidra failed for dependency " + binary.name + ": " + str(exc)[:300])
+            continue
+        reports.append(report)
+        module_summaries.append({
+            "path": str(binary),
+            "module": binary.name,
+            "managed_dotnet": metadata.get("managed_dotnet", False),
+            "function_count": report.get("function_count", 0),
+            "symbol_count": report.get("symbol_count", 0),
+            "string_count": report.get("string_count", 0),
+            "call_reference_count": report.get("call_reference_count", 0),
+            "decompiled_function_count": report.get("decompiled_function_count", 0),
+            "pe_metadata_path": str(module_dir / "pe-metadata.json"),
+            "ghidra_report_path": str(module_dir / "ghidra-analysis.json"),
+        })
+        if metadata.get("managed_dotnet"):
+            status("Managed .NET assembly detected: " + binary.name)
+            ilspy = _run_ilspy(binary, module_dir / "ilspy-source")
+            ilspy["module"] = binary.name
+            managed_summaries.append(ilspy)
+    if not reports:
+        raise GhidraError("Ghidra did not complete analysis for any modules.")
+    merged = dict(reports[0])
+    merged["analyzed_binary"] = str(primary)
+    merged["modules"] = module_summaries
+    merged["dependency_warnings"] = dependency_warnings
+    merged["total_function_count"] = sum(item.get("function_count", 0) for item in module_summaries)
+    merged["total_symbol_count"] = sum(item.get("symbol_count", 0) for item in module_summaries)
+    merged["total_string_count"] = sum(item.get("string_count", 0) for item in module_summaries)
+    merged["total_call_reference_count"] = sum(item.get("call_reference_count", 0) for item in module_summaries)
+    merged["managed_decompilation"] = [
+        {key: value for key, value in item.items() if key != "source_excerpt"}
+        for item in managed_summaries
+    ]
+    merged["module_functions"] = [
+        {"module": report.get("program_name"), "name": function.get("name"),
+         "address": function.get("address"), "parameter_count": function.get("parameter_count"),
+         "size_bytes": function.get("size_bytes")}
+        for report in reports[1:] for function in report.get("functions", [])[:150]
+    ][:1200]
+    merged["module_strings"] = [
+        {"module": report.get("program_name"), "value": item.get("value"), "address": item.get("address")}
+        for report in reports[1:] for item in report.get("strings", [])[:150]
+    ][:1200]
+    merged["module_decompiled_functions"] = [
+        {"module": report.get("program_name"), "name": item.get("name"),
+         "address": item.get("address"), "code": item.get("code", "")[:1200]}
+        for report in reports[1:] for item in report.get("decompiled_functions", [])[:8]
+    ][:60]
+    merged["ilspy_source_excerpt"] = "\\n\\n".join(
+        "MODULE " + item.get("module", "") + "\\n" + item.get("source_excerpt", "")
+        for item in managed_summaries if item.get("source_excerpt")
+    )[:20000]
+    merged["deep_analysis_completed_at"] = _now()
+    merged["analysis_elapsed_seconds"] = round(time.monotonic() - started, 2)
+    merged["analysis_notes"] = [
+        "Ghidra runs its normal auto-analysis on every successfully analyzed PE module.",
+        "Complete function, symbol, string, call-reference, and decompilation inventories remain in module-specific JSONL sidecars.",
+        "App-local imported DLLs are recursively discovered from PE import tables, subject to max_modules and the time budget.",
+        "Managed .NET code is additionally decompiled with ILSpy when ilspycmd is installed.",
+    ] + dependency_warnings
+    master_report = output / "ghidra-analysis.json"
+    master_report.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    status(
+        "Deep analysis complete: " + str(merged["total_function_count"]) + " functions across "
+        + str(len(module_summaries)) + " PE modules."
+    )
+    return merged
