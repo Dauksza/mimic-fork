@@ -21,4 +21,16 @@ If Not fso.FileExists(scriptPath) Then
 End If
 
 shell.CurrentDirectory = root
+
+' Install or refresh a convenient desktop shortcut for subsequent launches.
+On Error Resume Next
+Dim shortcutPath, shortcut
+shortcutPath = fso.BuildPath(shell.SpecialFolders("Desktop"), "Mimic.lnk")
+Set shortcut = shell.CreateShortcut(shortcutPath)
+shortcut.TargetPath = WScript.ScriptFullName
+shortcut.WorkingDirectory = root
+shortcut.Description = "Mimic - Local App Analysis and Reconstruction"
+shortcut.Save
+On Error GoTo 0
+
 shell.Run """" & pythonw & """ """ & scriptPath & """", 0, False
