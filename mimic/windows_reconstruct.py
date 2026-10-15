@@ -18,6 +18,7 @@ def safe_text(value, limit=500):
     value = str(value or "")
     value = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", value)
     value = re.sub(r"(?i)(password|passwd|token|secret|api.?key|authorization|cookie)(\s*[:=]\s*)[^,\s}]+", r"\1=[REDACTED]", value)
+    value = _redact_windows_user_path(value)
     return value[:limit]
 
 
