@@ -240,7 +240,8 @@ class CaptureSession:
                 try:
                     snapshot = snapshot_process(self.pid, self.title)
                     snapshot["sequence"] = self._sequence + 1
-                    serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+                    signature_data = {k: v for k, v in snapshot.items() if k != "timestamp"}
+                    serialized = json.dumps(signature_data, ensure_ascii=False, sort_keys=True)
                     signature = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
                     image_data = _screenshot_bytes(self.pid)
                     image_hash = hashlib.sha256(image_data).hexdigest() if image_data else None
