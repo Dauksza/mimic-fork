@@ -294,48 +294,57 @@ def _archive_inventory(path):
 
 
 def _source_inventory(root, max_files=4000):
+    import os
+
     base = Path(root).resolve()
     result, snippets = [], []
     ignore = {".git", "node_modules", "vendor", "dist", "build", "__pycache__", ".venv", "venv", "obj", "bin"}
-    code_suffixes = {".py", ".pyx", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".html", ".css", ".json", ".xml", ".java", ".kt", ".cs", ".cpp", ".c", ".h", ".hpp", ".go", ".rs", ".swift", ".dart", ".sql", ".ps1", ".bat", ".sh"}
+    code_suffixes = {".py", ".pyx", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".html", ".css", ".json", ".xml", ".java", ".kt", ".cs", ".cpp", ".c", ".h", ".hpp", ".go", ".rs", ".swift", ".dart", ".sql", ".ps1", ".bat", ".sh", ".toml", ".yaml", ".yml", ".plist"}
     count = 0
-    for path in base.rglob("*"):
-        if not path.is_file() or any(part in ignore for part in path.parts):
-            continue
-        if path.suffix.casefold() not in code_suffixes:
-            continue
-        count += 1
+    for directory, dirnames, filenames in os.walk(base, followlinks=False):
+        dirnames[:] = [
+            name for name in dirnames
+            if name.casefold() not in ignore and not (Path(directory) / name).is_symlink()
+        ]
+        for filename in filenames:
+            path = Path(directory) / filename
+            if path.suffix.casefold() not in code_suffixes or path.is_symlink():
+                continue
+            count += 1
+            if count > max_files:
+                break
+            try:
+                size = path.stat().st_size
+                if size > 2_000_000:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            relative = str(path.relative_to(base))
+            digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+            classes = re.findall(r"\b(?:class|interface|enum|struct|record)\s+([A-Za-z_$][\w$]*)", text)[:60]
+            functions = re.findall(r"\b(?:function\s+([A-Za-z_$][\w$]*)|(?:def|fn|func)\s+([A-Za-z_$][\w$]*))", text)[:80]
+            functions = [a or b for a, b in functions]
+            result.append({
+                "path": relative,
+                "size": size,
+                "sha256": digest,
+                "classes": classes,
+                "functions": functions,
+                "line_count": text.count("\n") + 1,
+            })
+            if len(snippets) < 80 and any(term in relative.casefold() for term in (
+                "main", "app", "route", "view", "screen", "controller", "service", "api", "manifest", "electron",
+                "auth", "model", "database", "network", "storage",
+            )):
+                snippets.append({"path": relative, "content": text[:4000]})
         if count > max_files:
             break
-        try:
-            size = path.stat().st_size
-            if size > 2_000_000:
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        relative = str(path.relative_to(base))
-        digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
-        classes = re.findall(r"\b(?:class|interface|enum|struct|record)\s+([A-Za-z_$][\w$]*)", text)[:60]
-        functions = re.findall(r"\b(?:function\s+([A-Za-z_$][\w$]*)|(?:def|fn|func)\s+([A-Za-z_$][\w$]*))", text)[:80]
-        functions = [a or b for a, b in functions]
-        result.append({
-            "path": relative,
-            "size": size,
-            "sha256": digest,
-            "classes": classes,
-            "functions": functions,
-            "line_count": text.count("\n") + 1,
-        })
-        if len(snippets) < 80 and any(term in relative.casefold() for term in (
-            "main", "app", "route", "view", "screen", "controller", "service", "api", "manifest", "electron"
-        )):
-            snippets.append({"path": relative, "content": text[:4000]})
     report_path = base / "mimic-source-inventory.json"
     report_path.write_text(json.dumps({"root": str(base), "file_count_scanned": count,
                                        "files": result, "priority_source_samples": snippets}, indent=2),
                            encoding="utf-8")
-    return {"file_count": len(result), "files": result, "priority_source_samples": snippets,
+    return {"file_count": len(result), "file_count_scanned": count, "files": result, "priority_source_samples": snippets,
             "report_path": str(report_path)}
 
 
