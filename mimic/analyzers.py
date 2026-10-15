@@ -246,9 +246,11 @@ def _safe_extract_members(archive_path, out_dir, predicate, max_members=MAX_ARCH
     try:
         with zipfile.ZipFile(archive_path) as archive:
             infos = archive.infolist()
-            if len(infos) > max_members:
+            if len(infos) > MAX_ARCHIVE_MEMBERS:
                 raise ReverseEngineeringError(f"Archive has {len(infos)} entries, exceeding the safety limit.")
             for info in infos:
+                if count >= max_members:
+                    break
                 if info.is_dir() or not predicate(info.filename):
                     continue
                 normalized = info.filename.replace("\\", "/")
@@ -257,10 +259,10 @@ def _safe_extract_members(archive_path, out_dir, predicate, max_members=MAX_ARCH
                     continue
                 if info.file_size > MAX_MEMBER_BYTES:
                     continue
+                if total + info.file_size > max_total:
+                    raise ReverseEngineeringError("Archive extraction size limit reached; choose a smaller artifact.")
                 total += info.file_size
                 count += 1
-                if count > max_members or total > max_total:
-                    raise ReverseEngineeringError("Archive extraction limit reached; reduce package size or choose a smaller artifact.")
                 output = (dest / Path(*parts)).resolve()
                 if dest not in output.parents:
                     continue
