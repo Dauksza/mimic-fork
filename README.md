@@ -18,7 +18,7 @@ It cannot recover the original private source code. It reconstructs observable b
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - [Ollama](https://ollama.com) running locally or on a trusted private LAN
 - A coding model installed in Ollama. Recommended starting point:
 
@@ -40,6 +40,61 @@ Optional live traffic capture:
 ```powershell
 python -m pip install -e ".[capture]"
 ```
+
+For PE metadata extraction during analysis:
+
+```powershell
+python -m pip install -e ".[analysis]"
+```
+
+## Reverse-engineer app formats with mimic-analyze
+
+Run format-aware static analysis without a desktop capture session:
+
+```powershell
+python -m pip install -e ".[analysis]"
+mimic-analyze "C:/Program Files/Vendor/App/App.exe" --out ./app-analysis --ghidra-home "C:/Tools/ghidra_PUBLIC"
+```
+
+The command classifies the target format, records file hashes and tool availability, stores full tool output locally, and asks local Ollama for an evidence-grounded report. Use --no-summary to collect static artifacts without invoking Ollama.
+
+Examples:
+
+```powershell
+mimic-analyze "C:/Program Files/Vendor/App" --out ./app-analysis --ghidra-home "C:/Tools/ghidra_PUBLIC"
+mimic-analyze ./target.apk --out ./apk-analysis --ghidra-home C:/Tools/ghidra_PUBLIC
+mimic-analyze ./library.jar --out ./jar-analysis
+mimic-analyze ./module.wasm --out ./wasm-analysis
+mimic-analyze C:/Path/To/resources/app.asar --out ./electron-analysis
+mimic-analyze ./source.zip --out ./source-analysis
+```
+
+### Local analyzers by application type
+
+Mimic does not download or install reverse-engineering tools. Install required tools from their official upstream releases and put the needed command-line executable on PATH.
+
+| Target type | Analyzer used when present | Evidence produced |
+|---|---|---|
+| Windows EXE/DLL/OCX/SYS | Ghidra headless, pefile | functions, selected decompilation, symbols, references/call graph, strings, imports/exports, PE headers/sections and app-local DLLs |
+| .NET assemblies and apphost | Ghidra for native wrappers; ilspycmd for managed DLLs when installed | managed source tree, types, runtime configs, dependencies and native imports |
+| Android APK/AAB/AAR/APKM/XAPK | JADX, Apktool, Ghidra for bundled native libraries | decompiled bytecode, manifest/resources/smali, DEX/native inventory |
+| JVM JAR/class | JADX and javap from a JDK | decompiled source where supported, bytecode, method descriptors and class inventory |
+| Electron | installed asar CLI | extracted JS/HTML/CSS/resources and package metadata |
+| Python source, pyz, pyc, frozen PyInstaller | source inventory, matching-version dis; optional pyinstxtractor-ng and decompyle3/uncompyle6 | source structure and bytecode disassembly/decompilation where compatible |
+| iOS IPA/macOS app bundle/native frameworks | plist/resource inspection and Ghidra for supported native modules | bundle metadata, native functions and strings |
+| Windows MSIX/APPX/MSI/EXE installers | package inspection; optional lessmsi, innoextract or 7-Zip | manifests, files and extracted payload binaries |
+| JavaScript/TypeScript/Python/Java/C#/Go/Rust source | source inventory and project metadata | file hashes, class/function names, likely entry-point source excerpts |
+| WebAssembly .wasm/.wat | wasm-tools, WABT (wasm2wat/wasm-objdump), wasm-decompile | module structure, imports/exports and disassembly/decompilation |
+
+Install only adapters appropriate to your target. For example, ILSpy command-line for .NET:
+
+```powershell
+dotnet tool install --global ilspycmd
+```
+
+Install JADX and Apktool for Android, Node.js plus the documented asar CLI for Electron, pyinstxtractor-ng and bytecode-version-compatible decompilers for frozen Python, and WABT or wasm-tools for WebAssembly. These are external tools and must be installed locally; Mimic reports when one is missing.
+
+Full reports and JSONL sidecars are kept on disk. Ollama receives a capped evidence set rather than entire binary dumps. Large or packed targets may require more time or specialized handling.
 
 ## Reconstruct a Windows desktop program
 
@@ -63,7 +118,7 @@ mimic-desktop
 2. Open the target Windows program after Mimic is armed.
 3. Use the application's normal screens, menus, dialogs, settings, and key workflows with data you are authorized to use.
 4. Click **STOP CAPTURE**.
-5. Click **GENERATE DESKTOP COPY**. Mimic analyzes the target executable with Ghidra first, then uses your local Ollama coding model to generate a PySide6 project.
+5. Click **GENERATE DESKTOP COPY**. Mimic identifies the target format, runs available local analyzers, generates a bounded Ollama analysis report, then uses local Ollama to generate a PySide6 project.
 
 Captures are stored beneath `%USERPROFILE%\\MimicProjects\\Captures`. The generated project defaults to `%USERPROFILE%\\MimicProjects\\Reconstructions`.
 
@@ -85,6 +140,22 @@ python main.py
 ### What Ghidra contributes
 
 Ghidra imports and analyzes the selected EXE/DLL and exports an inventory of functions, symbols, string constants, and selected decompilation. Mimic gives relevant static-analysis evidence to Ollama alongside captured UI states. This is real static binary analysis, but it cannot guarantee recovery of original source code, runtime-only behavior, server services, encrypted data, or behavior concealed by packers and obfuscation. Generated code is a new reconstruction, not a recovered copy of the original implementation.
+
+### Optional runtime analysis
+
+Mimic can attach a Frida trace to the selected program when you explicitly enable the Advanced runtime trace option before capture. Install the optional dependency:
+
+```powershell
+python -m pip install -e ".[instrumentation]"
+```
+
+Or trace an authorized running process from the command line:
+
+```powershell
+mimic-trace 12345 --out ./runtime-events.jsonl --duration 120
+```
+
+The trace records loaded modules and selected file-path, registry-subkey, and network-destination metadata. It does not record global keystrokes, command-line arguments, clipboard content, file contents, or network/request payloads. Instrumentation can affect program stability and does not prove an operation succeeded.
 
 ### Windows capture limits and privacy
 
