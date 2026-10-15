@@ -62,7 +62,7 @@ Ghidra analysis defaults to decompiling up to **1,000 functions per primary bina
 
 ```powershell
 # Deep pass (can take hours on large binaries)
-mimic-analyze "C:/Path/App.exe" --out ./deep-analysis --max-decompile 5000
+mimic-analyze "C:/Path/App.exe" --out ./deep-analysis --max-decompile 50000
 
 # Inventory-focused pass without decompiling functions
 mimic-analyze "C:/Path/App.exe" --out ./inventory --max-decompile 0 --no-summary
