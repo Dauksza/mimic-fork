@@ -685,6 +685,135 @@ def _analyze_source(target, out_dir):
     return {"type": "source_project", "target": str(path), "source_inventory": result}
 
 
+
+def _analyze_source_archive(target, out_dir, ghidra_home, status):
+    output = Path(out_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    inventory = _archive_inventory(target)
+    (output / "package-inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
+    extracted = _safe_extract_members(
+        target, output / "source-extracted",
+        lambda name: Path(name).suffix.casefold() in {
+            ".py", ".pyw", ".pyc", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx",
+            ".html", ".css", ".json", ".xml", ".plist", ".java", ".kt", ".cs",
+            ".cpp", ".c", ".h", ".hpp", ".go", ".rs", ".swift", ".dart", ".sql",
+            ".ps1", ".bat", ".sh", ".php", ".rb", ".toml", ".yaml", ".yml", ".md",
+            ".asar", ".exe", ".dll", ".so", ".dylib", ".jar", ".wasm",
+        } or Path(name).name.casefold() in {
+            "package.json", "appxmanifest.xml", "requirements.txt", "pyproject.toml",
+            "cargo.toml", "go.mod", "pom.xml", "build.gradle", "build.gradle.kts",
+        },
+        max_members=MAX_ARCHIVE_MEMBERS,
+        max_total=MAX_TOTAL_EXTRACT_BYTES,
+    )
+    root = output / "source-extracted"
+    report = {
+        "type": "source_archive",
+        "target": str(target),
+        "package_inventory": str(output / "package-inventory.json"),
+        "extracted_file_count": len(extracted),
+        "source_inventory": _source_inventory(root, max_files=15000),
+        "warnings": [],
+    }
+    asar = next(root.rglob("app.asar"), None)
+    if asar:
+        report["electron"] = _analyze_electron(asar, output / "electron-analysis", status)
+    binaries = [Path(name) for name in extracted if Path(name).suffix.casefold() in PE_TYPES]
+    if binaries and find_ghidra_home(ghidra_home):
+        reports = []
+        for index, binary in enumerate(binaries[:8]):
+            try:
+                reports.append(analyze_application(
+                    str(binary), str(output / "binary-analysis" / f"{index:02d}_{binary.stem[:60]}"),
+                    ghidra_home=ghidra_home, max_modules=4, max_decompile=100, on_status=status,
+                ))
+            except GhidraError as exc:
+                report["warnings"].append(str(exc))
+        report["binary_reports"] = reports
+    if len(extracted) >= MAX_ARCHIVE_MEMBERS:
+        report["warnings"].append("Extraction member limit reached. Some source files may not have been inspected.")
+    return report
+
+
+def _analyze_installer(target, out_dir, ghidra_home, status):
+    output = Path(out_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    target_path = Path(target).resolve()
+    ext = target_path.suffix.casefold()
+    report: dict[str, Any] = {"type": "windows_installer", "target": str(target_path), "tools": {}, "warnings": []}
+    extractor = None
+    command = None
+    if ext in {".msi", ".msp", ".msm"}:
+        lessmsi = shutil.which("lessmsi") or shutil.which("lessmsi.exe")
+        if lessmsi:
+            extractor = "lessmsi"
+            command = [lessmsi, "x", str(target_path), str(output / "extracted")]
+    elif ext == ".exe":
+        inno = shutil.which("innoextract") or shutil.which("innoextract.exe")
+        seven_zip = shutil.which("7z") or shutil.which("7z.exe") or shutil.which("7zz.exe")
+        if inno:
+            extractor = "innoextract"
+            command = [inno, "-d", str(output / "extracted"), str(target_path)]
+        elif seven_zip:
+            extractor = "7-Zip"
+            command = [seven_zip, "x", str(target_path), "-o" + str(output / "extracted"), "-y"]
+    if command:
+        status("Installer: statically extracting the package payload with " + extractor + "…")
+        report["tools"]["extractor"] = _run_tool(command, output / "extractor.log", 2400, cwd=str(output))
+    else:
+        report["warnings"].append(
+            "No suitable local installer extractor found. Install lessmsi for MSI files, innoextract for Inno Setup, or 7-Zip for supported installer payloads."
+        )
+    extracted_root = output / "extracted"
+    if extracted_root.is_dir():
+        report["source_inventory"] = _source_inventory(extracted_root, max_files=15000)
+        binaries = [p for p in extracted_root.rglob("*") if p.is_file() and p.suffix.casefold() in PE_TYPES]
+        reports = []
+        for index, binary in enumerate(binaries[:12]):
+            if not find_ghidra_home(ghidra_home):
+                report["warnings"].append("Ghidra was not found; extracted binaries were cataloged but not decompiled.")
+                break
+            try:
+                reports.append(analyze_application(
+                    str(binary), str(output / "binary-analysis" / f"{index:02d}_{binary.stem[:55]}"),
+                    ghidra_home=ghidra_home, max_modules=3, max_decompile=80, on_status=status,
+                ))
+            except GhidraError as exc:
+                report["warnings"].append(str(exc))
+        report["binary_reports"] = reports
+        report["payload_binaries_found"] = len(binaries)
+    return report
+
+
+def _analyze_windows_folder(target, out_dir, ghidra_home, status):
+    root = Path(target).resolve()
+    output = Path(out_dir).resolve()
+    report = {
+        "type": "windows_application_folder",
+        "target": str(root),
+        "source_inventory": _source_inventory(root, max_files=15000),
+        "warnings": [],
+        "binary_reports": [],
+    }
+    executables = sorted(
+        p for p in root.rglob("*.exe")
+        if not any(part.casefold() in {"uninstall", "uninstaller", "crashreporter", "update"} for part in p.parts)
+    )
+    for index, binary in enumerate(executables[:10]):
+        if not find_ghidra_home(ghidra_home):
+            report["warnings"].append("Ghidra is not installed/configured; executable files are listed but not decompiled.")
+            break
+        try:
+            report["binary_reports"].append(analyze_application(
+                str(binary), str(output / "binaries" / f"{index:02d}_{binary.stem[:60]}"),
+                ghidra_home=ghidra_home, max_modules=6, max_decompile=150, on_status=status,
+            ))
+        except GhidraError as exc:
+            report["warnings"].append("Analysis of " + str(binary) + " failed: " + str(exc)[:350])
+    report["executables_found"] = len(executables)
+    return report
+
+
 def reverse_engineer(target, out_dir, *, ghidra_home=None, on_status=None):
     """Choose local analyzers for common desktop/mobile/archive/source formats."""
     status = on_status or (lambda message: None)
