@@ -502,7 +502,7 @@ def _analyze_apple(target, out_dir, ghidra_home, status, max_decompile=1000):
                     try:
                         report["native_analysis"] = analyze_binary(
                             str(primary_binary), str(output / "ghidra-native"),
-                            ghidra_home=ghidra_home, max_decompile=250, on_status=status,
+                            ghidra_home=ghidra_home, max_decompile=max_decompile, on_status=status,
                         )
                     except GhidraError as exc:
                         report["warnings"].append("Ghidra could not analyze the main Mach-O executable: " + str(exc))
@@ -576,7 +576,7 @@ def _analyze_apple(target, out_dir, ghidra_home, status, max_decompile=1000):
                     report["warnings"].append("Framework analysis failed for " + binary.name + ": " + str(exc)[:250])
         report["source_inventory"] = _source_inventory(candidate, max_files=10000)
         return report
-    if candidate.is_file() and candidate.suffix.casefold() in {".dylib", ".so"} or candidate.is_file() and not candidate.suffix:
+    if candidate.is_file() and (candidate.suffix.casefold() in {".dylib", ".so"} or not candidate.suffix):
         report["native_analysis"] = analyze_binary(
             str(candidate), str(output / "ghidra-native"), ghidra_home=ghidra_home,
             max_decompile=250, on_status=status,
