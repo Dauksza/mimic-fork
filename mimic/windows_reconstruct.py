@@ -138,14 +138,25 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
             "language": raw_report.get("language"),
             "compiler": raw_report.get("compiler"),
             "function_count": raw_report.get("function_count"),
-            "functions": raw_report.get("functions", [])[:160],
-            "symbols": raw_report.get("symbols", [])[:120],
-            "strings": raw_report.get("strings", [])[:220],
+            "functions": [
+                {"name": safe_text(fn.get("name", ""), 140), "address": fn.get("address"),
+                 "parameter_count": fn.get("parameter_count"), "size_bytes": fn.get("size_bytes")}
+                for fn in raw_report.get("functions", [])[:100]
+            ],
+            "symbols": [
+                {"name": safe_text(sym.get("name", ""), 130), "address": sym.get("address"),
+                 "type": sym.get("type")}
+                for sym in raw_report.get("symbols", [])[:75]
+            ],
+            "strings": [
+                {"address": item.get("address"), "value": safe_text(item.get("value", ""), 170)}
+                for item in raw_report.get("strings", [])[:100]
+            ],
             "decompiled_functions": [
-                {"name": safe_text(fn.get("name", ""), 160),
+                {"name": safe_text(fn.get("name", ""), 130),
                  "address": fn.get("address"),
-                 "code": safe_text(fn.get("code", ""), 1700)}
-                for fn in raw_report.get("decompiled_functions", [])[:10]
+                 "code": safe_text(fn.get("code", ""), 950)}
+                for fn in raw_report.get("decompiled_functions", [])[:6]
             ],
         }
         notes.append("Ghidra static reverse engineering imported: " + str(ghidra_spec.get("function_count", 0)) + " functions found.")
@@ -180,10 +191,10 @@ def reconstruct_desktop(session_dir, out, model=None, vision_model="qwen2.5vl:7b
         + "Target title: " + safe_text(metadata.get("target_title", ""), 160) + "\n"
         + "Capture times: " + str(metadata.get("started_at")) + " / " + str(metadata.get("ended_at")) + "\n"
         + "Window process ID: " + str(metadata.get("target_pid")) + "\n"
-        + "Observed UI Automation states (sampled):\n" + json.dumps(states, ensure_ascii=False)[:70000] + "\n"
-        + "Visual analysis notes from local vision model:\n" + visual_spec[:18000] + "\n"
+        + "Observed UI Automation states (sampled):\n" + json.dumps(states, ensure_ascii=False)[:26000] + "\n"
+        + "Visual analysis notes from local vision model:\n" + visual_spec[:5500] + "\n"
         + "Ghidra static reverse-engineering evidence (function inventory, symbols, strings, selected decompilation):\n"
-        + json.dumps(ghidra_spec, ensure_ascii=False)[:36000]
+        + json.dumps(ghidra_spec, ensure_ascii=False)[:17000]
     )
     raw = client.chat(
         [{"role": "system", "content": "You are a senior native Windows UI reconstruction engineer. Return strictly valid JSON source files, no Markdown."},
