@@ -212,7 +212,7 @@ def main(argv=None):
     gp = sub.add_parser("gen", help="AI-generate a client for a host")
     gp.add_argument("host")
     gp.add_argument("-o", "--out", help="output .py path")
-    gp.add_argument("--model", default="sonnet", help="model name (claude default: sonnet)")
+    gp.add_argument("--model", default="qwen2.5-coder:14b", help="installed local Ollama model")
     gp.add_argument("--generator", default="claude", choices=["claude", "opencode"],
                     help="AI generator to use (default: claude)")
     gp.add_argument("--prompt-only", action="store_true", help="print the prompt instead of calling the AI generator")
