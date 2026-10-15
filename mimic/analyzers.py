@@ -383,7 +383,7 @@ def _run_apktool(target, output, timeout=2400):
     return result
 
 
-def _analyze_archive_native(archive_path, out_dir, ghidra_home, status, max_modules=8, max_decompile=600):
+def _analyze_archive_native(archive_path, out_dir, ghidra_home, status, max_modules=8, max_decompile=1000):
     extracted_dir = Path(out_dir) / "native-libraries"
     extracted = _safe_extract_members(
         archive_path, extracted_dir,
@@ -420,7 +420,7 @@ def _read_manifest_xml(path):
         return {"path": str(path), "parse_status": "unavailable"}
 
 
-def _analyze_android(target, out_dir, ghidra_home, status, max_decompile=600):
+def _analyze_android(target, out_dir, ghidra_home, status, max_decompile=1000):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     inventory = _archive_inventory(target)
@@ -452,7 +452,7 @@ def _analyze_android(target, out_dir, ghidra_home, status, max_decompile=600):
     return report
 
 
-def _analyze_apple(target, out_dir, ghidra_home, status, max_decompile=600):
+def _analyze_apple(target, out_dir, ghidra_home, status, max_decompile=1000):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {"type": "apple_package", "target": str(target), "warnings": []}
@@ -817,7 +817,7 @@ def _analyze_source(target, out_dir):
 
 
 
-def _analyze_source_archive(target, out_dir, ghidra_home, status, max_decompile=600):
+def _analyze_source_archive(target, out_dir, ghidra_home, status, max_decompile=1000):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     inventory = _archive_inventory(target)
@@ -866,7 +866,7 @@ def _analyze_source_archive(target, out_dir, ghidra_home, status, max_decompile=
     return report
 
 
-def _analyze_installer(target, out_dir, ghidra_home, status, max_decompile=600):
+def _analyze_installer(target, out_dir, ghidra_home, status, max_decompile=1000):
     output = Path(out_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     target_path = Path(target).resolve()
@@ -916,7 +916,7 @@ def _analyze_installer(target, out_dir, ghidra_home, status, max_decompile=600):
     return report
 
 
-def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=600):
+def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=1000):
     root = Path(target).resolve()
     output = Path(out_dir).resolve()
     report = {
@@ -945,7 +945,7 @@ def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=
     return report
 
 
-def reverse_engineer(target, out_dir, *, ghidra_home=None, max_decompile=600, on_status=None):
+def reverse_engineer(target, out_dir, *, ghidra_home=None, max_decompile=1000, on_status=None):
     """Choose local analyzers for common desktop/mobile/archive/source formats."""
     status = on_status or (lambda message: None)
     start = time.monotonic()
