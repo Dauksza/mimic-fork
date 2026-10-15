@@ -38,8 +38,8 @@ def _now():
 
 def _safe_text(value, limit=220):
     text = str(value or "").strip()
-    text = re.sub(r"(?i)bearer\\s+[A-Za-z0-9._~+/=-]+", "[REDACTED]", text)
-    text = re.sub(r"(?i)(password|passwd|token|secret|api.?key|authorization|cookie)(\\s*[:=]\\s*)\\S+", r"\\1=[REDACTED]", text)
+    text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "[REDACTED]", text)
+    text = re.sub(r"(?i)(password|passwd|token|secret|api.?key|authorization|cookie)(\s*[:=]\s*)\S+", r"\1=[REDACTED]", text)
     return text[:limit]
 
 
