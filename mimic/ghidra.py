@@ -155,8 +155,10 @@ def _write_windows_batch_wrapper(command, directory=None):
     return wrapper
 
 
-def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=18000, max_decompile=1000, per_function_timeout=8, on_status=None, analysis_timeout_per_file=None):
+def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=None, max_decompile=1000, per_function_timeout=8, on_status=None, analysis_timeout_per_file=None):
     """Run Ghidra headless analysis on a PE, ELF, Mach-O, or raw native binary."""
+    if timeout is None:
+        timeout = max(18000, _analysis_timeout_seconds(analysis_timeout_per_file) + 3600)
     status = on_status or (lambda message: None)
     binary = Path(binary_path).expanduser().resolve()
     if not binary.is_file():
@@ -588,10 +590,13 @@ def _runtime_layout(primary):
     return markers
 
 
-def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=21600,
+def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=None,
                         max_decompile=1000, max_modules=16, on_status=None,
                         analysis_timeout_per_file=None):
     """Analyze an EXE and its app-local imported DLLs, including managed .NET code when possible."""
+    configured_analysis_timeout = _analysis_timeout_seconds(analysis_timeout_per_file)
+    if timeout is None:
+        timeout = max(21600, configured_analysis_timeout + 7200)
     status = on_status or (lambda message: None)
     primary = Path(binary_path).expanduser().resolve()
     if not primary.is_file():
@@ -626,12 +631,14 @@ def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=21600,
         (module_dir / "pe-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         status(f"Ghidra module {index + 1}/{len(binaries)}: {binary.name} ({metadata.get('machine_name', 'PE')})")
         try:
-            module_timeout = _analysis_timeout_seconds(analysis_timeout_per_file)
+            module_timeout = configured_analysis_timeout
+            process_budget = module_timeout + 3600
             if index > 0:
                 module_timeout = min(module_timeout, 3000)
+                process_budget = module_timeout + 600
             report = analyze_binary(
                 binary, module_dir, ghidra_home=ghidra_home,
-                timeout=int(min(18000 if index == 0 else 3600, remaining)),
+                timeout=int(min(process_budget, remaining)),
                 max_decompile=max_decompile if index == 0 else min(max_decompile, 100),
                 per_function_timeout=8,
                 on_status=status,
