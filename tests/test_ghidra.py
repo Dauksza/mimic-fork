@@ -23,21 +23,21 @@ def test_finds_ghidra_nested_inside_downloaded_archive_folder(tmp_path, monkeypa
 
 def test_windows_batch_invocation_preserves_nested_quotes_and_paths_with_spaces():
     command = [
-        r"C:\\Ghidra 12.1.4\\support\\analyzeHeadless.bat",
-        r"C:\\Users\\Chris\\MimicProjects\\Analyses\\Product Updata Tool-analysis\\project",
+        r"C:\Ghidra 12.1.4\support\analyzeHeadless.bat",
+        r"C:\Users\Chris\MimicProjects\Analyses\Product Updata Tool-analysis\project",
         "Product_Updata_Tool_Mimic",
         "-import",
-        r"C:\\Program Files (x86)\\THINKCAR\\Product Updata Tool\\Product Updata Tool.exe",
+        r"C:\Program Files (x86)\THINKCAR\Product Updata Tool\Product Updata Tool.exe",
         "-postScript",
         "MimicExport.java",
-        r"C:\\Users\\Chris\\MimicProjects\\Analyses\\Product Updata Tool-analysis\\ghidra-analysis.json",
+        r"C:\Users\Chris\MimicProjects\Analyses\Product Updata Tool-analysis\ghidra-analysis.json",
         "250",
         "8",
     ]
-    invocation = _windows_batch_invocation(command, r"C:\\Windows\\System32\\cmd.exe")
+    invocation = _windows_batch_invocation(command, r"C:\Windows\System32\cmd.exe")
 
     # /s /c needs an outer quote pair around the full command string while
     # retaining the argument quotes that subprocess.list2cmdline generated.
-    assert ' /d /s /c ""C:\\\\Ghidra 12.1.4\\\\support\\\\analyzeHeadless.bat"' in invocation
-    assert '"C:\\\\Program Files (x86)\\\\THINKCAR\\\\Product Updata Tool\\\\Product Updata Tool.exe"' in invocation
+    assert ' /d /s /c ""C:\\Ghidra 12.1.4\\support\\analyzeHeadless.bat"' in invocation
+    assert '"C:\\Program Files (x86)\\THINKCAR\\Product Updata Tool\\Product Updata Tool.exe"' in invocation
     assert invocation.endswith(' 8"')
