@@ -98,7 +98,24 @@ def detect_runtime(path):
             return facts
         if list(target.glob("*.exe")):
             facts["type"] = "windows_application_folder"
+            facts["confidence"] = "high"
+            return facts
+        # Many installers place the actual application one directory below a
+        # vendor folder (for example, Vendor\\Product Name\\app.exe). Treat
+        # that common selection mistake as an application folder instead of
+        # falling through to a generic source inventory.
+        nested_executable_dirs = sorted({
+            executable.parent.resolve()
+            for executable in target.glob("*/*.exe")
+            if executable.is_file()
+        }, key=lambda item: str(item).casefold())
+        if nested_executable_dirs:
+            facts["type"] = "windows_application_folder"
             facts["confidence"] = "medium"
+            facts["application_root_candidates"] = [
+                str(item) for item in nested_executable_dirs[:20]
+            ]
+            facts["frameworks"].append("Windows application in nested folder")
             return facts
         if list(target.glob("*.py")):
             facts["type"] = "python_project"
@@ -314,7 +331,7 @@ def _archive_inventory(path):
     return items[:12000]
 
 
-def _source_inventory(root, max_files=4000):
+def _source_inventory(root, max_files=4000, report_path=None):
     import os
 
     base = Path(root).resolve()
@@ -361,12 +378,22 @@ def _source_inventory(root, max_files=4000):
                 snippets.append({"path": relative, "content": text[:4000]})
         if count > max_files:
             break
-    report_path = base / "mimic-source-inventory.json"
-    report_path.write_text(json.dumps({"root": str(base), "file_count_scanned": count,
-                                       "files": result, "priority_source_samples": snippets}, indent=2),
-                           encoding="utf-8")
+    # By default keep backward compatibility for callers inventorying a generated
+    # tree. Callers scanning a user's installation/source directory must pass an
+    # explicit report_path under Mimic's output directory, never into the target.
+    report_destination = (
+        Path(report_path).expanduser().resolve()
+        if report_path is not None
+        else base / "mimic-source-inventory.json"
+    )
+    report_destination.parent.mkdir(parents=True, exist_ok=True)
+    report_destination.write_text(
+        json.dumps({"root": str(base), "file_count_scanned": count,
+                    "files": result, "priority_source_samples": snippets}, indent=2),
+        encoding="utf-8",
+    )
     return {"file_count": len(result), "file_count_scanned": count, "files": result, "priority_source_samples": snippets,
-            "report_path": str(report_path)}
+            "report_path": str(report_destination)}
 
 
 def _run_jadx(target, output, timeout=3600, status=None):
@@ -617,7 +644,9 @@ def _analyze_apple(target, out_dir, ghidra_home, status, max_decompile=1000):
                     })
                 except GhidraError as exc:
                     report["warnings"].append("Framework analysis failed for " + binary.name + ": " + str(exc)[:250])
-        report["source_inventory"] = _source_inventory(candidate, max_files=10000)
+        report["source_inventory"] = _source_inventory(
+            candidate, max_files=10000, report_path=output / "mimic-source-inventory.json"
+        )
         return report
     if candidate.is_file() and (candidate.suffix.casefold() in {".dylib", ".so"} or not candidate.suffix):
         report["native_analysis"] = analyze_binary(
@@ -651,7 +680,9 @@ def _analyze_electron(target, out_dir, status):
     report: dict[str, Any] = {"type": "electron", "target": str(target), "asar_path": str(archive) if archive else None, "warnings": []}
     if not archive:
         if Path(target).is_dir():
-            report["source_inventory"] = _source_inventory(target)
+            report["source_inventory"] = _source_inventory(
+                target, report_path=output / "mimic-source-inventory.json"
+            )
             package_file = Path(target) / "package.json"
             if package_file.is_file():
                 report["package_json"] = json.loads(package_file.read_text(encoding="utf-8", errors="replace"))
@@ -803,7 +834,9 @@ def _analyze_python(target, out_dir):
     report: dict[str, Any] = {"type": "python", "target": str(path), "tools": {}, "warnings": []}
     if path.is_dir() or path.suffix.casefold() in {".py", ".pyw"}:
         root = path if path.is_dir() else path.parent
-        report["source_inventory"] = _source_inventory(root, max_files=12000)
+        report["source_inventory"] = _source_inventory(
+            root, max_files=12000, report_path=output / "mimic-source-inventory.json"
+        )
     if path.suffix.casefold() == ".pyz":
         extracted = _safe_extract_members(
             path, output / "pyz-extracted",
@@ -855,7 +888,9 @@ def _analyze_source(target, out_dir):
         if copied.resolve() != path:
             shutil.copy2(path, copied)
         root = inventory
-    result = _source_inventory(root, max_files=15000)
+    result = _source_inventory(
+        root, max_files=15000, report_path=output / "mimic-source-inventory.json"
+    )
     return {"type": "source_project", "target": str(path), "source_inventory": result}
 
 
@@ -1083,10 +1118,13 @@ def _analyze_installer(target, out_dir, ghidra_home, status, max_decompile=1000)
 def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=1000):
     root = Path(target).resolve()
     output = Path(out_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
     report = {
         "type": "windows_application_folder",
         "target": str(root),
-        "source_inventory": _source_inventory(root, max_files=15000),
+        "source_inventory": _source_inventory(
+            root, max_files=15000, report_path=output / "mimic-source-inventory.json"
+        ),
         "warnings": [],
         "binary_reports": [],
     }
