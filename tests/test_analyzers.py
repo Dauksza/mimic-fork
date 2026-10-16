@@ -7,6 +7,7 @@ import pytest
 from mimic.analyzers import (
     ReverseEngineeringError,
     _compact_analysis,
+    _collect_nested_warnings,
     _safe_extract_members,
     _safe_extract_tar,
     _source_inventory,
@@ -200,3 +201,20 @@ def test_compact_analysis_preserves_managed_decompilation_evidence():
     assert "ilspy_source_excerpt" in compact["evidence"]
     assert "public class App" in compact["evidence"]["ilspy_source_excerpt"]
     assert "hostfxr.dll" in compact["evidence"]["runtime_layout_markers"]
+
+
+def test_collect_nested_warnings_propagates_folder_binary_failures_without_duplicates():
+    report = {
+        "warnings": ["top-level warning"],
+        "analysis": {
+            "warnings": ["Ghidra failed on target.exe"],
+            "binary_reports": [],
+            "source_inventory": {"warnings": ["optional parser unavailable"]},
+        },
+    }
+    collected = _collect_nested_warnings(report)
+    assert collected == [
+        "top-level warning",
+        "Ghidra failed on target.exe",
+        "optional parser unavailable",
+    ]
