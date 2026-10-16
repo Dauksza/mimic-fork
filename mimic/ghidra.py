@@ -22,16 +22,27 @@ def find_ghidra_home(configured=None):
     for value in (configured, os.environ.get("GHIDRA_HOME"), os.environ.get("GHIDRA_INSTALL_DIR")):
         if value:
             candidates.append(Path(value).expanduser())
+    user_home = Path.home()
+    downloads = user_home / "Downloads"
     if os.name == "nt":
-        scan_roots = (Path.home(), Path("C:/"), Path("C:/Program Files"), Path("C:/Tools"))
+        scan_roots = (
+            user_home,
+            downloads,
+            Path("C:/"),
+            Path("C:/Program Files"),
+            Path("C:/Tools"),
+        )
         executable_names = ("analyzeHeadless.bat", "analyzeHeadless")
     else:
-        scan_roots = (Path.home(), Path("/opt"), Path("/usr/local"), Path("/Applications"))
+        scan_roots = (user_home, downloads, Path("/opt"), Path("/usr/local"), Path("/Applications"))
         executable_names = ("analyzeHeadless", "analyzeHeadless.bat")
     for root in scan_roots:
         try:
             if root.is_dir():
+                # A common Windows unzip layout is Downloads\\ghidra_<release>\\ghidra_<release>.
+                # Search one nested Ghidra directory so this valid install is discovered automatically.
                 candidates.extend(root.glob("ghidra*"))
+                candidates.extend(root.glob("ghidra*/ghidra*"))
         except OSError:
             pass
     for name in executable_names:
