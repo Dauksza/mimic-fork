@@ -19,6 +19,7 @@ from .windows_capture import (
     require_windows_dependencies,
     start_armed_capture,
     list_windows,
+    count_capture_states,
 )
 
 
@@ -1040,13 +1041,7 @@ class MimicWindowsApp:
         errors = errors or []
         self.arm_button.configure(state="normal")
         events_path = self.capture_dir / "events.jsonl" if self.capture_dir else None
-        actual_events = 0
-        if events_path and events_path.is_file():
-            try:
-                with events_path.open("r", encoding="utf-8", errors="replace") as stream:
-                    actual_events = sum(1 for line in stream if line.strip())
-            except OSError as exc:
-                errors.append("Could not count saved events: " + str(exc))
+        actual_events = count_capture_states(self.capture_dir) if self.capture_dir else 0
         has_states = actual_events > 0
         self.build_button.configure(state="normal" if has_states and not self.busy else "disabled")
         self._log(f"Capture stopped. Saved {actual_events} UI states.")
@@ -1104,8 +1099,13 @@ class MimicWindowsApp:
     def _build(self):
         if self.busy:
             return
-        if not self.capture_dir or not (self.capture_dir / "events.jsonl").exists():
-            messagebox.showwarning("No capture", "Capture a Windows program first.")
+        if not self.capture_dir or count_capture_states(self.capture_dir) < 1:
+            messagebox.showwarning(
+                "No usable capture",
+                "Mimic has no saved UI states to reconstruct. Capture a visible app window, "
+                "wait for the first state-count message, and interact with its screens before stopping.",
+                parent=self.root,
+            )
             return
         model = self.model_var.get().strip()
         ollama_url = self.ollama_url_var.get().strip() or None
