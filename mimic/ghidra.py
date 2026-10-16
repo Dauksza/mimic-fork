@@ -298,10 +298,11 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=18000, max_de
     else:
         report["analysis_timed_out"] = False
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    status(
-        f"Ghidra finished: {report.get('function_count', 0)} functions, "
-        f"{len(report.get('strings', []))} strings extracted."
-    )
+    if not report.get("analysis_timed_out"):
+        status(
+            f"Ghidra finished: {report.get('function_count', 0)} functions, "
+            f"{len(report.get('strings', []))} strings extracted."
+        )
     return report
 
 
