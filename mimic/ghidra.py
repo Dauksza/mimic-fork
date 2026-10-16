@@ -97,16 +97,16 @@ def _safe_project_name(path):
 
 
 def _windows_batch_invocation(command, comspec=None):
-    """Build a raw cmd.exe command line that preserves quoted batch arguments.
+    """Build cmd.exe command text without /s /c outer-quote stripping.
 
-    cmd.exe /s /c has special quote stripping rules. The command itself needs
-    one extra outer quote pair; passing the command string as an argv element
-    lets Python escape embedded quotes for the C runtime, which is not the
-    quoting language cmd.exe uses for its /c command text.
+    The command text starts with the unquoted word call rather than a quote,
+    so cmd.exe does not apply its special first/last-quote stripping rule to
+    the arguments. list2cmdline supplies individual argument quotes, and the
+    explicit call runs the Ghidra batch launcher in the same shell.
     """
     shell = comspec or os.environ.get("COMSPEC") or "cmd.exe"
     command_line = subprocess.list2cmdline([str(part) for part in command])
-    return subprocess.list2cmdline([shell]) + ' /d /s /c "' + command_line + '"'
+    return subprocess.list2cmdline([shell]) + " /d /c call " + command_line
 
 
 def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_decompile=1000, per_function_timeout=8, on_status=None):
