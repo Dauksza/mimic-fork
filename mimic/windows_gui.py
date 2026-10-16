@@ -699,7 +699,7 @@ class MimicWindowsApp:
         self.open_analysis_button.configure(state="normal")
         self.arm_button.configure(state="normal")
         self.build_button.configure(
-            state="normal" if self.capture_dir and (self.capture_dir / "events.jsonl").exists() else "disabled"
+            state="normal" if self.capture_dir and count_capture_states(self.capture_dir) > 0 else "disabled"
         )
         if error:
             self._log("Analysis failed: " + error)
@@ -1196,7 +1196,7 @@ class MimicWindowsApp:
     def _build_finished(self, success, message):
         self.busy = False
         self._log(message)
-        self.build_button.configure(state="normal" if self.capture_dir and (self.capture_dir / "events.jsonl").exists() else "disabled")
+        self.build_button.configure(state="normal" if self.capture_dir and count_capture_states(self.capture_dir) > 0 else "disabled")
         self.arm_button.configure(state="normal")
         if success:
             messagebox.showinfo("Reconstruction generated", message)
