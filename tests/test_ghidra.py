@@ -45,7 +45,7 @@ def test_windows_batch_invocation_hides_parentheses_in_initial_cmd_line(tmp_path
         assert ' /d /c call "' in invocation
         assert "Program Files (x86)" in wrapper_text
         assert '"C:\\Program Files (x86)\\THINKCAR\\Product Updata Tool\\Product Updata Tool.exe"' in wrapper_text
-        assert wrapper_text.startswith("@echo off\\r\\n")
-        assert wrapper_text.endswith("exit /b %ERRORLEVEL%\\r\\n")
+        assert wrapper_text.startswith("@echo off\\n")
+        assert wrapper_text.endswith("exit /b %ERRORLEVEL%\\n")
     finally:
         wrapper.unlink(missing_ok=True)
