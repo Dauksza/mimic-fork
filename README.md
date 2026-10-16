@@ -60,6 +60,8 @@ The **Analyze Any App** page has a built-in Tk path browser for files and folder
 
 The setup script installs Python dependencies only. Ghidra, JADX, Apktool, ILSpy, WABT, and other specialist tools must be installed separately if your target needs them. Ollama must already be running and your chosen model must be installed locally. A first-time install needs internet access for Python packages; subsequent launches use the local environment.
 
+**Ghidra diagnostics:** a detected `analyzeHeadless.bat` file only proves that a launcher file exists, not that analysis succeeded. For each analyzed binary, Mimic writes `ghidra-stdout.log`, `ghidra-stderr.log`, `ghidra-app.log`, and `ghidra-script.log` under that binary's analysis output directory. The main manifest now surfaces nested binary warnings at its top level. If the batch launcher returns exit code 255, Mimic stops the folder batch after that first shared failure rather than rapidly failing on every executable; inspect those logs before retrying. Ghidra 12.1.4 also needs its supported 64-bit JDK available through the Java environment or Ghidra's configured Java override.
+
 ## Reverse-engineer app formats with mimic-analyze
 
 Run format-aware static analysis without a desktop capture session:
