@@ -96,6 +96,18 @@ def _safe_project_name(path):
     return (stem or "MimicBinary")[:50] + "_Mimic"
 
 
+def _analysis_timeout_seconds(value=None, max_seconds=86400):
+    """Return a bounded per-file analysis timeout, configurable through the environment."""
+    raw = value
+    if raw is None:
+        raw = os.environ.get("MIMIC_GHIDRA_ANALYSIS_TIMEOUT", "14400")
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        seconds = 14400
+    return max(60, min(int(max_seconds), max(60, min(86400, seconds))))
+
+
 def _windows_batch_invocation(command, comspec=None):
     """Build the command line for a simple wrapper path without outer quotes."""
     shell = comspec or os.environ.get("COMSPEC") or "cmd.exe"
@@ -143,7 +155,7 @@ def _write_windows_batch_wrapper(command, directory=None):
     return wrapper
 
 
-def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_decompile=1000, per_function_timeout=8, on_status=None):
+def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=18000, max_decompile=1000, per_function_timeout=8, on_status=None, analysis_timeout_per_file=None):
     """Run Ghidra headless analysis on a PE, ELF, Mach-O, or raw native binary."""
     status = on_status or (lambda message: None)
     binary = Path(binary_path).expanduser().resolve()
@@ -188,12 +200,16 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
             suffix += 1
     project_dir.mkdir(parents=True, exist_ok=True)
     project_name = _safe_project_name(binary)
+    # Leave enough time after analysis for MimicExport to write its inventories.
+    analysis_timeout_per_file = _analysis_timeout_seconds(
+        analysis_timeout_per_file, max_seconds=max(60, timeout - 300)
+    )
     command = [
         str(analyzer), str(project_dir), project_name,
         "-scriptPath", str(scripts_dir),
         "-import", str(binary),
         "-postScript", "MimicExport.java", str(report_path), str(max_decompile), str(per_function_timeout),
-        "-analysisTimeoutPerFile", "3600",
+        "-analysisTimeoutPerFile", str(analysis_timeout_per_file),
         "-max-cpu", str(max(1, min(4, os.cpu_count() or 2))),
         "-log", str(out / "ghidra-app.log"),
         "-scriptlog", str(out / "ghidra-script.log"),
@@ -258,6 +274,29 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
     report["analysis_completed_at"] = _now()
     report["ghidra_home"] = str(home)
     report["analyzed_binary"] = str(binary)
+    app_log = out / "ghidra-app.log"
+    try:
+        app_log_text = app_log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        app_log_text = ""
+    timeout_match = re.search(
+        r"Analysis timed out at\s+(\d+)\s+seconds", app_log_text, re.IGNORECASE
+    )
+    if timeout_match:
+        report["analysis_timed_out"] = True
+        report["analysis_timeout_seconds"] = int(timeout_match.group(1))
+        report.setdefault("warnings", []).append(
+            "Ghidra auto-analysis reached its per-file timeout after "
+            + timeout_match.group(1)
+            + " seconds. The export contains partial analysis results; increase "
+              "MIMIC_GHIDRA_ANALYSIS_TIMEOUT or reduce the analysis workload."
+        )
+        status(
+            "Ghidra auto-analysis timed out after " + timeout_match.group(1)
+            + " seconds; preserving partial evidence and exported inventories."
+        )
+    else:
+        report["analysis_timed_out"] = False
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     status(
         f"Ghidra finished: {report.get('function_count', 0)} functions, "
@@ -548,8 +587,9 @@ def _runtime_layout(primary):
     return markers
 
 
-def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=14400,
-                        max_decompile=1000, max_modules=16, on_status=None):
+def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=21600,
+                        max_decompile=1000, max_modules=16, on_status=None,
+                        analysis_timeout_per_file=None):
     """Analyze an EXE and its app-local imported DLLs, including managed .NET code when possible."""
     status = on_status or (lambda message: None)
     primary = Path(binary_path).expanduser().resolve()
@@ -585,12 +625,16 @@ def analyze_application(binary_path, out_dir, ghidra_home=None, timeout=14400,
         (module_dir / "pe-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         status(f"Ghidra module {index + 1}/{len(binaries)}: {binary.name} ({metadata.get('machine_name', 'PE')})")
         try:
+            module_timeout = _analysis_timeout_seconds(analysis_timeout_per_file)
+            if index > 0:
+                module_timeout = min(module_timeout, 3000)
             report = analyze_binary(
                 binary, module_dir, ghidra_home=ghidra_home,
-                timeout=int(min(7200 if index == 0 else 2400, remaining)),
+                timeout=int(min(18000 if index == 0 else 3600, remaining)),
                 max_decompile=max_decompile if index == 0 else min(max_decompile, 100),
                 per_function_timeout=8,
                 on_status=status,
+                analysis_timeout_per_file=module_timeout,
             )
         except GhidraError as exc:
             if index == 0:
