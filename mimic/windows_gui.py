@@ -503,9 +503,7 @@ class MimicWindowsApp:
             elif mode == "file":
                 close(str(path))
 
-        nav = tk.Frame(address, bg="#0b1220")
         # Navigation controls live below the address bar so the path remains wide.
-        nav.pack_forget()
         nav_bar = tk.Frame(dialog, bg="#0b1220", padx=16)
         nav_bar.pack(fill="x", pady=(8, 2), before=list_frame)
         ttk.Button(nav_bar, text="Go", command=go_to_path).pack(side="left")
@@ -1044,7 +1042,6 @@ class MimicWindowsApp:
     def _capture_stopped(self, errors=None):
         errors = errors or []
         self.arm_button.configure(state="normal")
-        events_path = self.capture_dir / "events.jsonl" if self.capture_dir else None
         actual_events = count_capture_states(self.capture_dir) if self.capture_dir else 0
         has_states = actual_events > 0
         self.build_button.configure(state="normal" if has_states and not self.busy else "disabled")
@@ -1057,7 +1054,7 @@ class MimicWindowsApp:
             self._log("No UI states were captured. Keep the target visible and make sure Mimic and the target run at the same privilege level.")
             messagebox.showwarning(
                 "No UI states captured",
-                "Mimic did not record any visible UI states, so reconstruction is disabled.\\n\\n"
+                "Mimic did not record any visible UI states, so reconstruction is disabled.\n\n"
                 "Select the actual app window, keep it unminimized, interact with several screens, "
                 "and avoid running the app as administrator while Mimic is not elevated (or vice versa).",
                 parent=self.root,
