@@ -255,7 +255,17 @@ def _screenshot_bytes(pid):
     try:
         image = wrapper.capture_as_image()
     except Exception:
-        return None
+        # UIA's capture can fail for custom-rendered windows. Fall back to a
+        # screen-region capture while the user keeps the target visible.
+        try:
+            from PIL import ImageGrab
+            rect = wrapper.rectangle()
+            image = ImageGrab.grab(
+                bbox=(rect.left, rect.top, rect.right, rect.bottom),
+                all_screens=True,
+            )
+        except Exception:
+            return None
     if not isinstance(image, Image.Image):
         return None
     output = io.BytesIO()
