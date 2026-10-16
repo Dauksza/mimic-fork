@@ -300,9 +300,23 @@ class CaptureSession:
         event_path = self.out_dir / "events.jsonl"
         screenshots_dir = self.out_dir / "screenshots"
         with event_path.open("a", encoding="utf-8") as events:
+            poll_count = 0
+            last_warning = None
             while not self.stop_event.is_set():
                 try:
                     snapshot = snapshot_process(self.pid, self.title)
+                    poll_count += 1
+                    if not snapshot.get("windows"):
+                        if poll_count == 1 or poll_count % 5 == 0:
+                            self.on_status(
+                                "No accessible visible UI windows for "
+                                + self.title
+                                + ". Keep the app unminimized and run Mimic at the same privilege level."
+                            )
+                        last_warning = None
+                        self.stop_event.wait(self.poll_interval)
+                        continue
+                    last_warning = None
                     snapshot["sequence"] = self._sequence + 1
                     signature_data = {k: v for k, v in snapshot.items() if k not in {"timestamp", "sequence"}}
                     serialized = json.dumps(signature_data, ensure_ascii=False, sort_keys=True)
@@ -336,7 +350,10 @@ class CaptureSession:
                         if self._sequence == 1 or self._sequence % 5 == 0:
                             self.on_status(f"Capturing {self.title}: {self._sequence} distinct states observed")
                 except Exception as exc:
-                    self.on_status("Capture warning: " + _safe_text(exc, 240))
+                    warning = _safe_text(exc, 240)
+                    if warning != last_warning:
+                        self.on_status("Capture warning: " + warning)
+                        last_warning = warning
                 self.stop_event.wait(self.poll_interval)
 
 
