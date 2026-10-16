@@ -97,16 +97,48 @@ def _safe_project_name(path):
 
 
 def _windows_batch_invocation(command, comspec=None):
-    """Build cmd.exe command text without /s /c outer-quote stripping.
-
-    The command text starts with the unquoted word call rather than a quote,
-    so cmd.exe does not apply its special first/last-quote stripping rule to
-    the arguments. list2cmdline supplies individual argument quotes, and the
-    explicit call runs the Ghidra batch launcher in the same shell.
-    """
+    """Build the command line for a simple wrapper path without outer quotes."""
     shell = comspec or os.environ.get("COMSPEC") or "cmd.exe"
     command_line = subprocess.list2cmdline([str(part) for part in command])
     return subprocess.list2cmdline([shell]) + " /d /c call " + command_line
+
+
+def _write_windows_batch_wrapper(command):
+    """Write Ghidra arguments to a wrapper so CMDCMDLINE has no target parentheses.
+
+    Ghidra's Windows launcher can fail while parsing CMDCMDLINE if that initial
+    command line contains a path with parentheses (notably Program Files (x86)).
+    The outer cmd process therefore launches only this wrapper; the actual
+    Ghidra arguments live inside the wrapper's contents.
+    """
+    candidates = [
+        Path(tempfile.gettempdir()),
+        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Temp",
+    ]
+    directory = next(
+        (item for item in candidates
+         if item.is_dir() and "(" not in str(item) and ")" not in str(item)),
+        None,
+    )
+    if directory is None:
+        raise GhidraError(
+            "Could not find a temporary folder without parentheses for the Windows "
+            "Ghidra wrapper. Set TEMP to a local path such as C:\\Users\\<user>\\AppData\\Local\\Temp."
+        )
+    file_descriptor, filename = tempfile.mkstemp(
+        prefix="mimic-ghidra-", suffix=".cmd", dir=str(directory)
+    )
+    wrapper = Path(filename)
+    encoding = "mbcs" if os.name == "nt" else "utf-8"
+    try:
+        with os.fdopen(file_descriptor, "w", encoding=encoding, newline="") as stream:
+            stream.write("@echo off\r\n")
+            stream.write("call " + subprocess.list2cmdline([str(part) for part in command]) + "\r\n")
+            stream.write("exit /b %ERRORLEVEL%\r\n")
+    except Exception:
+        wrapper.unlink(missing_ok=True)
+        raise
+    return wrapper
 
 
 def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_decompile=1000, per_function_timeout=8, on_status=None):
@@ -165,12 +197,14 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
         "-scriptlog", str(out / "ghidra-script.log"),
     ]
     status("Ghidra: analyzing " + binary.name + " with headless static analysis…")
+    wrapper_path = None
     try:
         if os.name == "nt" and analyzer.suffix.casefold() in {".bat", ".cmd"}:
             shell = os.environ.get("COMSPEC") or "cmd.exe"
-            invocation = _windows_batch_invocation(command, shell)
+            wrapper_path = _write_windows_batch_wrapper(command)
+            invocation = _windows_batch_invocation([str(wrapper_path)], shell)
             completed = subprocess.run(
-                invocation, executable=shell, capture_output=True, text=True,
+                invocation, executable=shell, capture_output=True, text=True, errors="replace",
                 timeout=timeout, cwd=str(home), check=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
@@ -184,6 +218,12 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
             )
     except subprocess.TimeoutExpired as exc:
         raise GhidraError(f"Ghidra analysis exceeded {timeout} seconds. Check its log in {out}.") from exc
+    finally:
+        if wrapper_path is not None:
+            try:
+                wrapper_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     (out / "ghidra-stdout.log").write_text(completed.stdout[-100000:], encoding="utf-8", errors="replace")
     (out / "ghidra-stderr.log").write_text(completed.stderr[-100000:], encoding="utf-8", errors="replace")
     if completed.returncode != 0:
