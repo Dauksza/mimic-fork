@@ -51,3 +51,23 @@ def test_windows_batch_invocation_hides_parentheses_in_initial_cmd_line(tmp_path
         assert wrapper_text.endswith("exit /b %ERRORLEVEL%\n")
     finally:
         wrapper.unlink(missing_ok=True)
+
+def test_analysis_timeout_is_configurable_and_bounded(monkeypatch):
+    from mimic.ghidra import _analysis_timeout_seconds
+
+    monkeypatch.setenv("MIMIC_GHIDRA_ANALYSIS_TIMEOUT", "21600")
+    assert _analysis_timeout_seconds() == 21600
+    assert _analysis_timeout_seconds("999999") == 86400
+    assert _analysis_timeout_seconds("invalid") == 14400
+
+
+def test_mimic_export_imports_data_from_ghidra_listing_package():
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "mimic"
+        / "ghidra_scripts"
+        / "MimicExport.java"
+    ).read_text(encoding="utf-8")
+
+    assert "import ghidra.program.model.listing.Data;" in script
+    assert "import ghidra.program.model.data.Data;" not in script
