@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
+import mimic.analyzers as analyzers_module
 from mimic.analyzers import (
+    _analyze_windows_folder,
     ReverseEngineeringError,
     _compact_analysis,
     _collect_nested_warnings,
@@ -247,3 +249,28 @@ def test_collect_nested_warnings_propagates_folder_binary_failures_without_dupli
         "Ghidra failed on target.exe",
         "optional parser unavailable",
     ]
+
+
+def test_folder_analysis_stops_after_first_timed_out_binary(tmp_path, monkeypatch):
+    root = tmp_path / "VendorApp"
+    root.mkdir()
+    (root / "first.exe").write_bytes(b"MZ")
+    (root / "second.exe").write_bytes(b"MZ")
+    calls = []
+
+    monkeypatch.setattr(analyzers_module, "find_ghidra_home", lambda *_: root)
+
+    def fake_analyze_application(binary, output, **kwargs):
+        calls.append(Path(binary).name)
+        return {
+            "analyzed_binary": str(binary),
+            "analysis_timed_out": True,
+            "function_count": 12,
+        }
+
+    monkeypatch.setattr(analyzers_module, "analyze_application", fake_analyze_application)
+    report = _analyze_windows_folder(root, tmp_path / "analysis", root, lambda message: None)
+
+    assert calls == ["first.exe"]
+    assert report["binary_reports"][0]["analysis_timed_out"] is True
+    assert any("Stopped the folder batch" in warning for warning in report["warnings"])
