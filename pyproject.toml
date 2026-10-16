@@ -1,8 +1,8 @@
 [project]
 name = "mimic-client"
 version = "0.1.0"
-description = "Intercept any app and call it from Python like a library — AI writes the client."
-requires-python = ">=3.9"
+description = "Capture app traffic and reconstruct authorized web apps locally with Ollama."
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Divy Srivastava", email = "me@littledivy.com" }]
@@ -10,9 +10,17 @@ dependencies = ["requests>=2.28"]
 
 [project.optional-dependencies]
 capture = ["mitmproxy>=10"]
+windows = ["pywinauto>=0.6.8", "Pillow>=10", "pefile>=2023.2.7"]
+analysis = ["pefile>=2023.2.7"]
+instrumentation = ["frida>=16.0.0"]
 
 [project.scripts]
 mimic = "mimic.cli:main"
+mimic-build = "mimic.build_cli:main"
+mimic-desktop = "mimic.windows_gui:main"
+mimic-desktop-build = "mimic.windows_build_cli:main"
+mimic-analyze = "mimic.analyze_cli:main"
+mimic-trace = "mimic.trace_cli:main"
 
 [build-system]
 requires = ["setuptools>=64"]
