@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
 import threading
 import tkinter as tk
@@ -815,11 +816,31 @@ class MimicWindowsApp:
         button_bar = tk.Frame(dialog, bg="#0b1220", padx=16, pady=12)
         button_bar.pack(fill="x")
 
+        picker_updates = queue.Queue()
+
         def alive():
             try:
                 return bool(dialog.winfo_exists())
             except tk.TclError:
                 return False
+
+        def drain_picker_updates():
+            """Apply worker results from the Tk thread; never call Tkinter from a worker."""
+            if not alive():
+                return
+            try:
+                while True:
+                    rows, error = picker_updates.get_nowait()
+                    update_rows(rows, error)
+            except queue.Empty:
+                pass
+            except tk.TclError:
+                return
+            try:
+                if alive():
+                    dialog.after(40, drain_picker_updates)
+            except tk.TclError:
+                pass
 
         def close_picker():
             if alive():
@@ -847,10 +868,10 @@ class MimicWindowsApp:
                     error = None
                 except Exception as exc:
                     rows, error = [], str(exc)
-                try:
-                    self.root.after(0, update_rows, rows, error)
-                except tk.TclError:
-                    pass
+                # Queue the data only. Calling root.after() from this worker is
+                # unreliable on some Windows/Tk builds and can leave the picker
+                # forever at "Loading visible windows..." with an empty list.
+                picker_updates.put((rows, error))
 
             threading.Thread(target=worker, name="mimic-list-capture-targets", daemon=True).start()
 
@@ -899,6 +920,7 @@ class MimicWindowsApp:
         dialog.update_idletasks()
         dialog.lift()
         dialog.grab_set()
+        dialog.after(40, drain_picker_updates)
         refresh()
 
     def _cancel_capture_setup(self):
