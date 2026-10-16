@@ -10,7 +10,7 @@ It cannot recover the original private source code. It reconstructs observable b
 - **Endpoint inventory:** host, method, path, status, request/response examples.
 - **Python API client:** generated locally with Ollama.
 - **Web app reconstruction:** React/Vite project with navigation, responsive styling, forms, API integration, loading/error/empty states, setup instructions, and a coverage report.
-- **Windows desktop capture:** arm the Mimic observer, open the target program, use it, then stop capture. The selected process's visible UI Automation structure and screenshot changes are recorded.
+- **Windows desktop capture:** the Capture & Rebuild chooser lists already-running visible windows using UI Automation, with native Win32 window enumeration as a fallback when UI Automation returns no rows or errors. Picker results are queued back to Tk's UI thread to avoid a permanently blank/loading list. Select the target process, interact with it, then stop capture to save visible UI structure and screenshots.
 - **Ghidra static reverse engineering:** Mimic invokes the installed Ghidra headless analyzer, exports function names, symbols, strings, and selected decompiled functions, then supplies a sanitized summary to local Ollama.
 - **Native Windows UI reconstruction:** generate an editable Python/PySide6 app informed by captured windows, controls, geometry, screenshots, and Ghidra analysis.
 - **Visual evidence:** a locally installed vision-capable Ollama model can analyze screenshots to infer layout and styling.
@@ -188,7 +188,7 @@ The trace records loaded modules and selected file-path, registry-subkey, and ne
 
 ### Windows capture limits and privacy
 
-Capture uses Windows UI Automation and screenshots. Interfaces drawn entirely on a custom canvas, protected processes, remote desktop surfaces, and some GPU-rendered apps may expose little UI structure. Edit/document/password values are omitted from the element tree, and Mimic does not install global keyboard hooks or read the clipboard. Screenshots can still show sensitive information; use a clean test account and keep the capture folder private.
+Capture uses Windows UI Automation and screenshots; the app chooser falls back to Win32 enumeration for discovery, but capture contents still depend on the target's accessibility support. Interfaces drawn entirely on a custom canvas, protected processes, remote desktop surfaces, and some GPU-rendered apps may expose little UI structure. Edit/document/password values are omitted from the element tree, and Mimic does not install global keyboard hooks or read the clipboard. Screenshots can still show sensitive information; use a clean test account and keep the capture folder private.
 
 ## Reconstruct a web app from a HAR file
 
