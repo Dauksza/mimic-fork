@@ -49,6 +49,11 @@ class MimicWindowsApp:
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._close)
         self._log("Ready. Arm capture, then open the Windows application to observe.")
+        detected_ghidra = find_ghidra_home()
+        if detected_ghidra:
+            self._log("Ghidra ready: " + str(detected_ghidra))
+        else:
+            self._log("Ghidra not detected yet. Use Find Ghidra after checking the installation folder.")
 
     def _build_ui(self):
         style = ttk.Style()
@@ -112,7 +117,7 @@ class MimicWindowsApp:
         self.build_button.pack(side="left", padx=(8, 0))
 
         self._field(page, "Detected target executable (EXE / DLL)", self.binary_var, 0, self._browse_binary, "Browse EXE")
-        self._field(page, "Ghidra installation folder", self.ghidra_var, 1, self._browse_ghidra, "Browse Ghidra")
+        self._field(page, "Ghidra installation folder", self.ghidra_var, 1, self._detect_ghidra, "Find Ghidra")
         self._model_field(page, row=2, include_url=True)
         self._field(page, "Maximum functions to decompile (0–50000)", self.max_decompile_var, 3)
         self._field(page, "Output reconstruction folder", self.output_var, 4, self._browse_reconstruction_output, "Browse")
@@ -147,7 +152,7 @@ class MimicWindowsApp:
         )
         self._field(
             page, "Ghidra installation folder (optional for non-native targets)", self.ghidra_var, 2,
-            self._browse_ghidra, "Browse Ghidra",
+            self._detect_ghidra, "Find Ghidra",
         )
         self._model_field(page, row=3, include_url=True)
         self._field(page, "Maximum functions to decompile (0–50000)", self.max_decompile_var, 4)
@@ -621,21 +626,31 @@ class MimicWindowsApp:
         if path:
             self.binary_var.set(path)
 
-    def _browse_ghidra(self):
-        # Keep the native Windows folder chooser owned by Mimic so it cannot
-        # open behind the main window and make the application appear frozen.
-        configured = self.ghidra_var.get().strip()
-        current = Path(configured).expanduser() if configured else Path.home()
-        initialdir = current if current.is_dir() else Path.home()
-        path = filedialog.askdirectory(
+    def _detect_ghidra(self):
+        # Detection is filesystem-based and non-blocking: avoid the native Windows
+        # folder dialog, which can hang or appear behind the app on some systems.
+        configured = self.ghidra_var.get().strip() or None
+        detected = find_ghidra_home(configured)
+        if detected:
+            self.ghidra_var.set(str(detected))
+            launcher = detected / "support" / (
+                "analyzeHeadless.bat" if sys.platform == "win32" else "analyzeHeadless"
+            )
+            if not launcher.is_file():
+                alternate = detected / "support" / "analyzeHeadless"
+                if alternate.is_file():
+                    launcher = alternate
+            self._log("Ghidra detected: " + str(detected))
+            self._log("Headless launcher: " + str(launcher))
+            return
+        messagebox.showwarning(
+            "Ghidra not detected",
+            "Mimic could not find a Ghidra installation containing "
+            "support\\analyzeHeadless.bat. Your installation root should be the folder "
+            "inside the extracted archive that contains the support and Ghidra folders. "
+            "You can paste that full folder path into the editable field.",
             parent=self.root,
-            title="Choose the extracted Ghidra installation folder",
-            initialdir=str(initialdir),
-            mustexist=True,
         )
-        if path:
-            self.ghidra_var.set(path)
-            self._log("Ghidra folder selected: " + path)
 
     def _build(self):
         if self.busy:
