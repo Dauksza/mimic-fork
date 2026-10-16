@@ -56,7 +56,7 @@ For a double-click Windows setup:
 3. Double-click `Mimic.vbs` to start Mimic without leaving a command prompt open. It launches `Mimic.pyw` with that private environment.
 4. Choose **Analyze Any App** for a standalone analysis, or **Capture & Rebuild** to open a program and recreate its visible Windows UI.
 
-The **Analyze Any App** page has file/folder pickers, results-folder selection, a local Ollama model list refresh, Ollama server URL, Ghidra path, the function-decompilation budget, an optional AI findings report, a live activity log, and an Open Results Folder button. Missing optional analyzers are reported rather than silently treated as successful. You do not need to use the command-line examples below for everyday GUI operation.
+The **Analyze Any App** page has a built-in Tk path browser for files and folders (it does not invoke the Windows shell file/folder chooser), results-folder selection, a local Ollama model list refresh, Ollama server URL, Ghidra path, the function-decompilation budget, an optional AI findings report, a live activity log, and an Open Results Folder button. Folder scans happen on a worker thread so large directories do not freeze the main UI. Missing optional analyzers are reported rather than silently treated as successful. You do not need to use the command-line examples below for everyday GUI operation.
 
 The setup script installs Python dependencies only. Ghidra, JADX, Apktool, ILSpy, WABT, and other specialist tools must be installed separately if your target needs them. Ollama must already be running and your chosen model must be installed locally. A first-time install needs internet access for Python packages; subsequent launches use the local environment.
 
@@ -141,11 +141,11 @@ Launch Mimic:
 mimic-desktop
 ```
 
-1. Click **ARM CAPTURE**.
-2. Open the target Windows program after Mimic is armed.
-3. Use the application's normal screens, menus, dialogs, settings, and key workflows with data you are authorized to use.
-4. Click **STOP CAPTURE**.
-5. Click **GENERATE DESKTOP COPY**. Mimic identifies the target format, runs available local analyzers, generates a bounded Ollama analysis report, then uses local Ollama to generate a PySide6 project.
+1. Click **ARM CAPTURE** and confirm the local capture notice.
+2. In the app selector, choose the application window that is already open and click **Capture Selected**. If the app is not open yet, choose **Wait for New App**, then launch the app. This avoids relying on detecting only newly opened windows.
+3. Keep the target unminimized and interact with its screens, menus, dialogs, settings, and ordinary workflows using data you are authorized to use. Watch the activity log for “distinct states observed” and screenshot/capture warnings.
+4. Click **STOP CAPTURE**. Mimic counts valid saved UI states and refuses to enable reconstruction when no usable states were recorded.
+5. Click **GENERATE DESKTOP COPY** only after states were recorded. Mimic runs available static analysis, writes a bounded local Ollama analysis report, then asks local Ollama to generate a PySide6 project.
 
 Captures are stored beneath `%USERPROFILE%\\MimicProjects\\Captures`. The generated project defaults to `%USERPROFILE%\\MimicProjects\\Reconstructions`.
 
