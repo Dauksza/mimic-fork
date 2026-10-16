@@ -106,43 +106,148 @@ def _process_image_path(pid):
     return None
 
 
+def _list_windows_native(exclude_pid=None):
+    """Fallback to Win32 EnumWindows when UI Automation cannot expose any windows."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", wintypes.LONG),
+            ("top", wintypes.LONG),
+            ("right", wintypes.LONG),
+            ("bottom", wintypes.LONG),
+        ]
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    found = []
+
+    def visit(hwnd, _lparam):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            title_length = user32.GetWindowTextLengthW(hwnd)
+            if title_length <= 0:
+                return True
+            title_buffer = ctypes.create_unicode_buffer(min(title_length + 1, 2048))
+            if user32.GetWindowTextW(hwnd, title_buffer, len(title_buffer)) <= 0:
+                return True
+            title = _safe_text(title_buffer.value, 180)
+            if not title:
+                return True
+
+            pid_value = wintypes.DWORD(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_value))
+            pid = int(pid_value.value)
+            if pid <= 0 or (exclude_pid is not None and pid == int(exclude_pid)):
+                return True
+
+            rect = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return True
+            width = max(0, int(rect.right - rect.left))
+            height = max(0, int(rect.bottom - rect.top))
+            if width < 80 or height < 50:
+                return True
+
+            class_buffer = ctypes.create_unicode_buffer(512)
+            user32.GetClassNameW(hwnd, class_buffer, len(class_buffer))
+            try:
+                handle_value = int(hwnd)
+            except (TypeError, ValueError):
+                handle_value = int(ctypes.cast(hwnd, ctypes.c_void_p).value or 0)
+            found.append({
+                "hwnd": handle_value,
+                "pid": pid,
+                "executable_path": _process_image_path(pid),
+                "title": title,
+                "class_name": _safe_text(class_buffer.value, 120),
+                "rect": [int(rect.left), int(rect.top), width, height],
+                "enumeration_backend": "win32",
+            })
+        except Exception:
+            # One unusual or protected window must not prevent discovery of the rest.
+            pass
+        return True
+
+    callback = callback_type(visit)
+    if not user32.EnumWindows(callback, 0):
+        error_code = ctypes.get_last_error()
+        if error_code:
+            raise OSError(error_code, "Win32 EnumWindows failed")
+    unique = {(row["pid"], row["hwnd"]): row for row in found}
+    return sorted(unique.values(), key=lambda row: (row["title"].casefold(), row["pid"], row["hwnd"]))
+
+
 def list_windows(exclude_pid=None):
-    """Return visible top-level windows with basic identity and geometry."""
+    """Return visible top-level windows using UI Automation with a Win32 fallback."""
     require_windows_dependencies()
     from pywinauto import Desktop
 
     found = []
-    desktop = Desktop(backend="uia")
+    errors = []
     try:
+        desktop = Desktop(backend="uia")
         wrappers = desktop.windows(visible_only=True, enabled_only=False)
+        for wrapper in wrappers:
+            try:
+                hwnd = int(wrapper.handle)
+                pid = int(wrapper.element_info.process_id or 0)
+                title = _safe_text(wrapper.window_text(), 180)
+                if not title or pid <= 0 or (exclude_pid is not None and pid == int(exclude_pid)):
+                    continue
+                rect = wrapper.rectangle()
+                width, height = max(0, rect.width()), max(0, rect.height())
+                if width < 80 or height < 50:
+                    continue
+                found.append({
+                    "hwnd": hwnd,
+                    "pid": pid,
+                    "executable_path": _process_image_path(pid),
+                    "title": title,
+                    "class_name": _safe_text(wrapper.element_info.class_name, 120),
+                    "rect": [rect.left, rect.top, width, height],
+                    "enumeration_backend": "uia",
+                })
+            except Exception:
+                continue
     except Exception as exc:
-        raise WindowsCaptureError("Windows UI Automation could not enumerate windows: " + str(exc)) from exc
-    for wrapper in wrappers:
-        try:
-            hwnd = int(wrapper.handle)
-            pid = int(wrapper.element_info.process_id or 0)
-            title = _safe_text(wrapper.window_text(), 180)
-            if not title or pid <= 0 or (exclude_pid and pid == exclude_pid):
-                continue
-            rect = wrapper.rectangle()
-            width, height = max(0, rect.width()), max(0, rect.height())
-            if width < 80 or height < 50:
-                continue
-            found.append({
-                "hwnd": hwnd,
-                "pid": pid,
-                "executable_path": _process_image_path(pid),
-                "title": title,
-                "class_name": _safe_text(wrapper.element_info.class_name, 120),
-                "rect": [rect.left, rect.top, width, height],
-            })
-        except Exception:
-            continue
-    # Prefer one main window per process/title while retaining distinct dialogs.
-    unique = {}
-    for row in found:
-        unique[(row["pid"], row["hwnd"])] = row
-    return sorted(unique.values(), key=lambda row: (row["title"].casefold(), row["pid"], row["hwnd"]))
+        errors.append("UI Automation: " + str(exc))
+
+    unique = {(row["pid"], row["hwnd"]): row for row in found}
+    if unique:
+        return sorted(unique.values(), key=lambda row: (row["title"].casefold(), row["pid"], row["hwnd"]))
+
+    try:
+        native_rows = _list_windows_native(exclude_pid=exclude_pid)
+    except Exception as exc:
+        errors.append("Win32 window enumeration: " + str(exc))
+        native_rows = []
+    if native_rows:
+        return native_rows
+    if errors:
+        raise WindowsCaptureError(
+            "Could not enumerate visible app windows. "
+            + " | ".join(errors)[:1200]
+            + ". Try running Mimic at the same privilege level as the target app."
+        )
+    return []
 
 
 def _element_snapshot(window, max_controls=450):
