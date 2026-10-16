@@ -1104,9 +1104,18 @@ def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=
                 ghidra_home=ghidra_home, max_modules=6, max_decompile=max(50, min(250, max_decompile // max(1, min(len(executables), 10)))), on_status=status,
             ))
         except GhidraError as exc:
+            error_text = str(exc)
             report["warnings"].append(
-                "Analysis of " + binary.name + " failed: " + str(exc)[:1400]
+                "Analysis of " + binary.name + " failed: " + error_text[:1800]
             )
+            if "Ghidra exited with code 255" in error_text:
+                report["warnings"].append(
+                    "Stopped the folder batch after the first Ghidra exit code 255. "
+                    "This is likely a shared launcher/runtime failure; inspect that binary's "
+                    "ghidra-stdout.log, ghidra-stderr.log, ghidra-app.log, and ghidra-script.log "
+                    "before retrying the other executables."
+                )
+                break
     report["executables_found"] = len(executables)
     return report
 
