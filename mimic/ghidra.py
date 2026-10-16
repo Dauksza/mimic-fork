@@ -96,6 +96,19 @@ def _safe_project_name(path):
     return (stem or "MimicBinary")[:50] + "_Mimic"
 
 
+def _windows_batch_invocation(command, comspec=None):
+    """Build a raw cmd.exe command line that preserves quoted batch arguments.
+
+    cmd.exe /s /c has special quote stripping rules. The command itself needs
+    one extra outer quote pair; passing the command string as an argv element
+    lets Python escape embedded quotes for the C runtime, which is not the
+    quoting language cmd.exe uses for its /c command text.
+    """
+    shell = comspec or os.environ.get("COMSPEC") or "cmd.exe"
+    command_line = subprocess.list2cmdline([str(part) for part in command])
+    return subprocess.list2cmdline([shell]) + ' /d /s /c "' + command_line + '"'
+
+
 def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_decompile=1000, per_function_timeout=8, on_status=None):
     """Run Ghidra headless analysis on a PE, ELF, Mach-O, or raw native binary."""
     status = on_status or (lambda message: None)
@@ -148,13 +161,16 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
         "-postScript", "MimicExport.java", str(report_path), str(max_decompile), str(per_function_timeout),
         "-analysisTimeoutPerFile", "3600",
         "-max-cpu", str(max(1, min(4, os.cpu_count() or 2))),
+        "-log", str(out / "ghidra-app.log"),
+        "-scriptlog", str(out / "ghidra-script.log"),
     ]
     status("Ghidra: analyzing " + binary.name + " with headless static analysis…")
     try:
         if os.name == "nt" and analyzer.suffix.casefold() in {".bat", ".cmd"}:
-            command_line = subprocess.list2cmdline(command)
+            shell = os.environ.get("COMSPEC") or "cmd.exe"
+            invocation = _windows_batch_invocation(command, shell)
             completed = subprocess.run(
-                ["cmd.exe", "/d", "/s", "/c", command_line], capture_output=True, text=True,
+                invocation, executable=shell, capture_output=True, text=True,
                 timeout=timeout, cwd=str(home), check=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
@@ -171,10 +187,24 @@ def analyze_binary(binary_path, out_dir, ghidra_home=None, timeout=7200, max_dec
     (out / "ghidra-stdout.log").write_text(completed.stdout[-100000:], encoding="utf-8", errors="replace")
     (out / "ghidra-stderr.log").write_text(completed.stderr[-100000:], encoding="utf-8", errors="replace")
     if completed.returncode != 0:
-        raise GhidraError(
-            "Ghidra exited with code " + str(completed.returncode) +
-            ". Review ghidra-stdout.log and ghidra-stderr.log in " + str(out)
+        captured = "\\n".join(
+            part.strip() for part in (completed.stderr, completed.stdout) if part and part.strip()
         )
+        diagnostic = "\\n".join(captured.splitlines()[-16:])[-2400:]
+        message = (
+            "Ghidra exited with code " + str(completed.returncode) +
+            ". Review ghidra-stdout.log, ghidra-stderr.log, ghidra-app.log, and "
+            "ghidra-script.log in " + str(out)
+        )
+        if diagnostic:
+            message += "\\nLast launcher output:\\n" + diagnostic
+        elif completed.returncode == 255:
+            message += (
+                "\\nGhidra returned 255 without console output. This points to a launcher/JDK "
+                "startup issue or command-line parsing failure. Verify a supported 64-bit JDK "
+                "is configured and inspect the Ghidra log files listed above."
+            )
+        raise GhidraError(message)
     if not report_path.is_file():
         raise GhidraError(
             "Ghidra ran but did not create its analysis report. Review the Ghidra logs in " + str(out)
