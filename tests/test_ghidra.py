@@ -34,7 +34,9 @@ def test_windows_batch_invocation_hides_parentheses_in_initial_cmd_line(tmp_path
         "250",
         "8",
     ]
-    wrapper = _write_windows_batch_wrapper(command, tmp_path)
+    wrapper_dir = tmp_path / "temp folder"
+    wrapper_dir.mkdir()
+    wrapper = _write_windows_batch_wrapper(command, wrapper_dir)
     try:
         invocation = _windows_batch_invocation([str(wrapper)], r"C:\Windows\System32\cmd.exe")
         wrapper_text = wrapper.read_text(encoding="utf-8")
@@ -45,7 +47,7 @@ def test_windows_batch_invocation_hides_parentheses_in_initial_cmd_line(tmp_path
         assert ' /d /c call "' in invocation
         assert "Program Files (x86)" in wrapper_text
         assert '"C:\\Program Files (x86)\\THINKCAR\\Product Updata Tool\\Product Updata Tool.exe"' in wrapper_text
-        assert wrapper_text.startswith("@echo off\\n")
-        assert wrapper_text.endswith("exit /b %ERRORLEVEL%\\n")
+        assert wrapper_text.startswith("@echo off\n")
+        assert wrapper_text.endswith("exit /b %ERRORLEVEL%\n")
     finally:
         wrapper.unlink(missing_ok=True)
