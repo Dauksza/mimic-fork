@@ -39,6 +39,9 @@ class MimicWindowsApp:
         self.discovery = None
         self.discovery_stopped = None
         self.capture_dir = None
+        self.capture_setup_cancelled = False
+        self.capture_picker = None
+        self.capture_target_rows = []
         self.busy = False
         self.model_var = tk.StringVar(value=os.environ.get("MIMIC_OLLAMA_MODEL", "qwen2.5-coder:14b"))
         self.ollama_url_var = tk.StringVar(value=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
@@ -741,17 +744,18 @@ class MimicWindowsApp:
             pass
 
     def _arm(self):
-        if self.capture or self.discovery or self.busy:
+        if self.capture or self.discovery or self.busy or self.capture_picker:
             return
         trace_notice = (
-            "\n\nThe optional Frida trace will attach to the detected process and record selected module, file-path, registry-path, and connection-destination metadata. It may affect app stability."
+            "\n\nThe optional Frida trace records selected module, file/registry paths, and connection destinations. It may affect app stability."
             if self.runtime_trace_var.get() else ""
         )
         confirmed = messagebox.askyesno(
-            "Arm desktop observation",
-            "Mimic will observe the next visible Windows program window and save its UI structure and up to 240 screenshots.\n\n"
-            "Screenshots can contain confidential information. Close sensitive windows and use a test account."
-            + trace_notice + "\n\nProceed with local capture on this PC?"
+            "Capture a desktop app",
+            "Mimic records visible windows and UI Automation structure for one selected process. "
+            "Choose an app that is already open, or choose Wait for New App. Screenshots may contain private data. "
+            "Use a test account and keep the capture folder private." + trace_notice + "\n\nStart local capture?",
+            parent=self.root,
         )
         if not confirmed:
             return
@@ -760,30 +764,210 @@ class MimicWindowsApp:
             root_dir = Path.home() / "MimicProjects" / "Captures"
             root_dir.mkdir(parents=True, exist_ok=True)
             self.capture_dir = root_dir / ("capture_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
-            self.discovery_stopped, self.discovery = start_armed_capture(
-                self.capture_dir, self._target_detected, self._status_from_worker
-            )
         except Exception as exc:
-            messagebox.showerror("Cannot start capture", str(exc))
+            messagebox.showerror("Cannot prepare capture", str(exc), parent=self.root)
             return
+        self.capture_setup_cancelled = False
         self.arm_button.configure(state="disabled")
-        self.stop_button.configure(state="normal")
+        self.stop_button.configure(state="disabled")
         self.build_button.configure(state="disabled")
-        self._log("Armed. Open the target program now. Mimic will detect the new window and its process.")
+        self._log("Choose an already-running app below, or use Wait for New App.")
+
+        dialog = tk.Toplevel(self.root)
+        self.capture_picker = dialog
+        dialog.title("Choose app to capture")
+        dialog.transient(self.root)
+        dialog.geometry("800x520")
+        dialog.minsize(650, 400)
+        dialog.configure(bg="#0b1220")
+        tk.Label(
+            dialog, text="Select the application you actually want to capture",
+            bg="#0b1220", fg="#f0f5ff", font=("Segoe UI", 13, "bold"),
+            padx=16, pady=12,
+        ).pack(anchor="w")
+        tk.Label(
+            dialog,
+            text="This list includes visible windows that are already open. Mimic captures the selected process, not the whole desktop.",
+            bg="#0b1220", fg="#a9bad3", font=("Segoe UI", 9),
+            padx=16, pady=2, wraplength=750, justify="left",
+        ).pack(anchor="w")
+        list_frame = tk.Frame(dialog, bg="#0b1220", padx=16, pady=10)
+        list_frame.pack(fill="both", expand=True)
+        targets = tk.Listbox(
+            list_frame, bg="#080e18", fg="#d8e1f0", selectbackground="#245f73",
+            selectforeground="#ffffff", font=("Segoe UI", 10), relief="flat",
+            borderwidth=0, exportselection=False,
+        )
+        target_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=targets.yview)
+        targets.configure(yscrollcommand=target_scroll.set)
+        target_scroll.pack(side="right", fill="y")
+        targets.pack(side="left", fill="both", expand=True)
+        status_var = tk.StringVar(value="Loading visible windows in the background…")
+        tk.Label(
+            dialog, textvariable=status_var, bg="#0b1220", fg="#a9bad3",
+            font=("Segoe UI", 9), anchor="w", padx=16, pady=5,
+        ).pack(fill="x")
+        button_bar = tk.Frame(dialog, bg="#0b1220", padx=16, pady=12)
+        button_bar.pack(fill="x")
+
+        def alive():
+            try:
+                return bool(dialog.winfo_exists())
+            except tk.TclError:
+                return False
+
+        def close_picker():
+            if alive():
+                try:
+                    dialog.grab_release()
+                except tk.TclError:
+                    pass
+                dialog.destroy()
+            self.capture_picker = None
+
+        def cancel():
+            close_picker()
+            self._cancel_capture_setup()
+
+        def refresh():
+            if not alive():
+                return
+            status_var.set("Enumerating visible app windows in a worker thread…")
+            refresh_button.configure(state="disabled")
+
+            def worker():
+                try:
+                    rows = list_windows(exclude_pid=os.getpid())
+                    rows.sort(key=lambda row: (row["title"].casefold(), row["pid"], row["hwnd"]))
+                    error = None
+                except Exception as exc:
+                    rows, error = [], str(exc)
+                try:
+                    self.root.after(0, update_rows, rows, error)
+                except tk.TclError:
+                    pass
+
+            threading.Thread(target=worker, name="mimic-list-capture-targets", daemon=True).start()
+
+        def update_rows(rows, error):
+            if not alive():
+                return
+            refresh_button.configure(state="normal")
+            targets.delete(0, "end")
+            self.capture_target_rows = rows
+            if error:
+                status_var.set("Could not enumerate windows: " + error)
+                return
+            for row in rows:
+                executable = Path(row["executable_path"]).name if row.get("executable_path") else "(executable path unavailable)"
+                targets.insert("end", f'{row["title"]}    | PID {row["pid"]}    | {executable}')
+            if rows:
+                targets.selection_set(0)
+                targets.activate(0)
+                status_var.set(f"{len(rows)} visible windows found. Select the correct app, then Capture Selected.")
+            else:
+                status_var.set("No visible app windows found. Refresh, check the app is visible, or use Wait for New App.")
+
+        def capture_selected(_event=None):
+            selection = targets.curselection()
+            if not selection:
+                status_var.set("Select a window first.")
+                return
+            index = selection[0]
+            if index >= len(self.capture_target_rows):
+                status_var.set("The window list changed. Press Refresh.")
+                return
+            target = self.capture_target_rows[index]
+            close_picker()
+            self._start_target_capture(target)
+
+        def wait_new():
+            close_picker()
+            self._start_waiting_for_new_app()
+
+        targets.bind("<Double-Button-1>", capture_selected)
+        ttk.Button(button_bar, text="Refresh Windows", command=refresh).pack(side="left")
+        ttk.Button(button_bar, text="Wait for New App", command=wait_new).pack(side="left", padx=(8, 0))
+        ttk.Button(button_bar, text="Capture Selected", command=capture_selected).pack(side="right")
+        ttk.Button(button_bar, text="Cancel", command=cancel).pack(side="right", padx=(0, 8))
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.update_idletasks()
+        dialog.lift()
+        dialog.grab_set()
+        refresh()
+
+    def _cancel_capture_setup(self):
+        self.capture_setup_cancelled = True
+        if self.discovery_stopped:
+            self.discovery_stopped.set()
+        self.discovery_stopped = None
+        self.discovery = None
+        self.capture_picker = None
+        self.capture_dir = None
+        self.arm_button.configure(state="normal")
+        self.stop_button.configure(state="disabled")
+        self.build_button.configure(state="disabled")
+        self._log("Capture setup cancelled. No capture was saved.")
+
+    def _start_waiting_for_new_app(self):
+        if not self.capture_dir:
+            self._cancel_capture_setup()
+            return
+        self.stop_button.configure(state="normal")
+        self._log("Taking a baseline of current windows in the background. Open the target app after Mimic says it is waiting.")
+
+        def worker():
+            try:
+                stopped, watcher = start_armed_capture(
+                    self.capture_dir, self._target_detected, self._status_from_worker
+                )
+                try:
+                    self.root.after(0, self._watch_started, stopped, watcher)
+                except tk.TclError:
+                    stopped.set()
+            except Exception as exc:
+                try:
+                    self.root.after(0, self._watch_start_failed, str(exc))
+                except tk.TclError:
+                    pass
+
+        threading.Thread(target=worker, name="mimic-prepare-window-watch", daemon=True).start()
+
+    def _watch_started(self, stopped, watcher):
+        if self.capture_setup_cancelled or self.capture:
+            stopped.set()
+            return
+        self.discovery_stopped = stopped
+        self.discovery = watcher
+        self.stop_button.configure(state="normal")
+        self._log("Waiting for a newly opened app window. Existing windows are not auto-selected.")
+
+    def _watch_start_failed(self, error):
+        self._log("Could not start window discovery: " + error)
+        messagebox.showerror("Window discovery failed", error, parent=self.root)
+        self._cancel_capture_setup()
 
     def _target_detected(self, target):
+        if self.capture_setup_cancelled:
+            return
         try:
             self.root.after(0, self._start_target_capture, target)
         except tk.TclError:
             pass
 
     def _start_target_capture(self, target):
+        if self.capture_setup_cancelled or self.capture:
+            return
         if self.discovery_stopped and self.discovery_stopped.is_set():
             return
-        self._log("Detected: " + target["title"] + " (PID " + str(target["pid"]) + ")")
+        if self.discovery_stopped:
+            self.discovery_stopped.set()
+        self.discovery_stopped = None
+        self.discovery = None
+        self._log("Starting UI capture for: " + target["title"] + " (PID " + str(target["pid"]) + ")")
         self.binary_var.set(target.get("executable_path") or "")
         if not target.get("executable_path"):
-            self._log("Windows did not reveal this process's executable path; use Browse EXE to choose it manually.")
+            self._log("Windows did not reveal this process's executable path; Browse EXE can set it manually.")
         try:
             self.capture = CaptureSession(
                 target["pid"], target["title"], self.capture_dir,
@@ -793,7 +977,7 @@ class MimicWindowsApp:
         except Exception as exc:
             self.capture = None
             self._log("Could not capture target: " + str(exc))
-            messagebox.showerror("Capture failed", str(exc))
+            messagebox.showerror("Capture failed", str(exc), parent=self.root)
             self.arm_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
             return
@@ -808,9 +992,15 @@ class MimicWindowsApp:
                 self._log("Runtime trace was not started: " + str(exc))
         project_name = self.capture_dir.name + "-clone"
         self.output_var.set(str(Path.home() / "MimicProjects" / "Reconstructions" / project_name))
-        self._log("Capture active. Exercise distinct pages, menus, dialogs, settings, and normal workflows. Visible private data may appear in screenshots.")
+        self.arm_button.configure(state="disabled")
+        self.stop_button.configure(state="normal")
+        self.build_button.configure(state="disabled")
+        self._log("Capture started. Keep the target visible and exercise screens, menus, dialogs, settings, and normal workflows. Mimic will report each distinct UI state it records.")
 
     def _stop(self):
+        if self.capture_picker:
+            return
+        self.capture_setup_cancelled = True
         if self.discovery_stopped:
             self.discovery_stopped.set()
         active = self.capture
@@ -824,30 +1014,63 @@ class MimicWindowsApp:
         self.build_button.configure(state="disabled")
         if active or trace:
             self._log("Stopping capture, flushing UI events, and detaching runtime instrumentation…")
+
             def finish_capture():
+                errors = []
                 if active:
-                    active.stop()
+                    try:
+                        active.stop()
+                    except Exception as exc:
+                        errors.append("Capture stop error: " + str(exc))
                 if trace:
-                    trace.stop()
+                    try:
+                        trace.stop()
+                    except Exception as exc:
+                        errors.append("Runtime trace stop error: " + str(exc))
                 try:
-                    self.root.after(0, self._capture_stopped)
+                    self.root.after(0, self._capture_stopped, errors)
                 except tk.TclError:
                     pass
-            threading.Thread(target=finish_capture, daemon=True).start()
-        else:
-            self._capture_stopped()
 
-    def _capture_stopped(self):
+            threading.Thread(target=finish_capture, name="mimic-stop-capture", daemon=True).start()
+        else:
+            self._capture_stopped([])
+
+    def _capture_stopped(self, errors=None):
+        errors = errors or []
         self.arm_button.configure(state="normal")
-        has_events = bool(self.capture_dir and (self.capture_dir / "events.jsonl").exists())
-        self.build_button.configure(state="normal" if has_events and not self.busy else "disabled")
-        self._log("Capture saved. Generation will run Ghidra first, then local Ollama.")
+        events_path = self.capture_dir / "events.jsonl" if self.capture_dir else None
+        actual_events = 0
+        if events_path and events_path.is_file():
+            try:
+                with events_path.open("r", encoding="utf-8", errors="replace") as stream:
+                    actual_events = sum(1 for line in stream if line.strip())
+            except OSError as exc:
+                errors.append("Could not count saved events: " + str(exc))
+        has_states = actual_events > 0
+        self.build_button.configure(state="normal" if has_states and not self.busy else "disabled")
+        self._log(f"Capture stopped. Saved {actual_events} UI states.")
+        if errors:
+            self._log("Capture shutdown warnings: " + " | ".join(errors))
+        if has_states:
+            self._log("Capture folder: " + str(self.capture_dir))
+        else:
+            self._log("No UI states were captured. Keep the target visible and make sure Mimic and the target run at the same privilege level.")
+            messagebox.showwarning(
+                "No UI states captured",
+                "Mimic did not record any visible UI states, so reconstruction is disabled.\\n\\n"
+                "Select the actual app window, keep it unminimized, interact with several screens, "
+                "and avoid running the app as administrator while Mimic is not elevated (or vice versa).",
+                parent=self.root,
+            )
+        self.stop_button.configure(state="disabled")
+        self.capture_setup_cancelled = False
 
     def _browse_binary(self):
-        path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Choose the original executable",
-            filetypes=[("Windows executables and libraries", "*.exe *.dll *.ocx *.sys"), ("All files", "*.*")]
+        path = self._path_picker(
+            "Choose the original executable",
+            mode="file",
+            initial=self.binary_var.get() or Path.home(),
         )
         if path:
             self.binary_var.set(path)
