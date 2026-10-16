@@ -1137,10 +1137,20 @@ def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=
             report["warnings"].append("Ghidra is not installed/configured; executable files are listed but not decompiled.")
             break
         try:
-            report["binary_reports"].append(analyze_application(
+            binary_report = analyze_application(
                 str(binary), str(output / "binaries" / f"{index:02d}_{binary.stem[:60]}"),
                 ghidra_home=ghidra_home, max_modules=6, max_decompile=max(50, min(250, max_decompile // max(1, min(len(executables), 10)))), on_status=status,
-            ))
+            )
+            report["binary_reports"].append(binary_report)
+            if binary_report.get("analysis_timed_out"):
+                report["warnings"].append(
+                    "Stopped the folder batch after " + binary.name
+                    + " reached the Ghidra analysis timeout. Its export contains partial "
+                      "evidence; remaining executables were not started to avoid repeating "
+                      "a multi-hour timeout. Increase MIMIC_GHIDRA_ANALYSIS_TIMEOUT or analyze "
+                      "a specific executable for a focused run."
+                )
+                break
         except GhidraError as exc:
             error_text = str(exc)
             report["warnings"].append(
