@@ -98,7 +98,7 @@ def detect_runtime(path):
             return facts
         if list(target.glob("*.exe")):
             facts["type"] = "windows_application_folder"
-            facts["confidence"] = "high"
+            facts["confidence"] = "medium"
             return facts
         # Many installers place the actual application one directory below a
         # vendor folder (for example, Vendor\\Product Name\\app.exe). Treat
