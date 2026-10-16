@@ -501,8 +501,8 @@ class MimicWindowsApp:
         nav = tk.Frame(address, bg="#0b1220")
         # Navigation controls live below the address bar so the path remains wide.
         nav.pack_forget()
-        nav_bar = tk.Frame(dialog, bg="#0b1220", padx=16, pady=(8, 2))
-        nav_bar.pack(fill="x", before=list_frame)
+        nav_bar = tk.Frame(dialog, bg="#0b1220", padx=16)
+        nav_bar.pack(fill="x", pady=(8, 2), before=list_frame)
         ttk.Button(nav_bar, text="Go", command=go_to_path).pack(side="left")
         ttk.Button(nav_bar, text="Up", command=go_up).pack(side="left", padx=(6, 0))
         ttk.Button(nav_bar, text="Home", command=go_home).pack(side="left", padx=(6, 0))
