@@ -103,7 +103,7 @@ def _windows_batch_invocation(command, comspec=None):
     return subprocess.list2cmdline([shell]) + " /d /c call " + command_line
 
 
-def _write_windows_batch_wrapper(command):
+def _write_windows_batch_wrapper(command, directory=None):
     """Write Ghidra arguments to a wrapper so CMDCMDLINE has no target parentheses.
 
     Ghidra's Windows launcher can fail while parsing CMDCMDLINE if that initial
@@ -111,10 +111,12 @@ def _write_windows_batch_wrapper(command):
     The outer cmd process therefore launches only this wrapper; the actual
     Ghidra arguments live inside the wrapper's contents.
     """
-    candidates = [
-        Path(tempfile.gettempdir()),
-        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Temp",
-    ]
+    candidates = (
+        [Path(directory)] if directory is not None else [
+            Path(tempfile.gettempdir()),
+            Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Temp",
+        ]
+    )
     directory = next(
         (item for item in candidates
          if item.is_dir() and "(" not in str(item) and ")" not in str(item)),
