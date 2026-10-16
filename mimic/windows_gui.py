@@ -8,7 +8,7 @@ import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from .ghidra import find_ghidra_home
 from .analyzers import reverse_engineer, summarize_analysis_manifest
@@ -18,6 +18,7 @@ from .windows_capture import (
     WindowsCaptureError,
     require_windows_dependencies,
     start_armed_capture,
+    list_windows,
 )
 
 
@@ -318,21 +319,242 @@ class MimicWindowsApp:
                 preferred = next((name for name in models if "coder" in name.casefold()), models[0])
                 self.model_var.set(preferred)
 
+    def _path_picker(self, title, mode="folder", initial=None):
+        """Tk-only path picker; avoids Windows shell dialogs that can hang behind the UI."""
+        initial_path = Path(initial).expanduser() if initial else Path.home()
+        if initial_path.is_file():
+            initial_path = initial_path.parent
+        if not initial_path.is_dir():
+            initial_path = Path.home()
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.geometry("780x570")
+        dialog.minsize(650, 440)
+        dialog.configure(bg="#0b1220")
+        result = {"path": None, "current": str(initial_path), "rows": [], "generation": 0, "drives": False}
+
+        title_label = tk.Label(
+            dialog, text=title, fg="#f0f5ff", bg="#0b1220",
+            font=("Segoe UI", 13, "bold"), padx=16, pady=12,
+        )
+        title_label.pack(anchor="w")
+        address = tk.Frame(dialog, bg="#0b1220", padx=16)
+        address.pack(fill="x")
+        path_var = tk.StringVar(value=str(initial_path))
+        path_entry = ttk.Entry(address, textvariable=path_var)
+        path_entry.pack(side="left", fill="x", expand=True)
+        status_var = tk.StringVar(value="Choose a folder or type a path.")
+        list_frame = tk.Frame(dialog, bg="#0b1220", padx=16, pady=10)
+        list_frame.pack(fill="both", expand=True)
+        entries = tk.Listbox(
+            list_frame, bg="#080e18", fg="#d8e1f0", selectbackground="#245f73",
+            selectforeground="#ffffff", activestyle="dotbox", font=("Segoe UI", 10),
+            relief="flat", borderwidth=0, exportselection=False,
+        )
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=entries.yview)
+        entries.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        entries.pack(side="left", fill="both", expand=True)
+
+        status_label = tk.Label(
+            dialog, textvariable=status_var, fg="#a9bad3", bg="#0b1220",
+            font=("Segoe UI", 9), anchor="w", padx=16, pady=4, wraplength=720,
+        )
+        status_label.pack(fill="x")
+
+        def close(value=None):
+            result["path"] = value
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+
+        def show_rows(generation, folder, rows, error=None, drives=False):
+            try:
+                if not dialog.winfo_exists() or generation != result["generation"]:
+                    return
+            except tk.TclError:
+                return
+            entries.delete(0, "end")
+            result["rows"] = rows
+            result["drives"] = drives
+            result["current"] = str(folder) if folder else ""
+            path_var.set(str(folder) if folder else "This PC — choose a drive")
+            if error:
+                status_var.set("Cannot read that location: " + error)
+                return
+            for path, is_dir in rows:
+                name = str(path) if drives else path.name
+                if is_dir:
+                    entries.insert("end", "[FOLDER] " + name)
+                else:
+                    entries.insert("end", "[FILE]   " + name)
+            if drives:
+                status_var.set("Select a drive, or type a folder path above and press Go.")
+            elif mode == "file":
+                status_var.set(f"{len(rows)} items in {folder}. Double-click a file to select it.")
+            else:
+                status_var.set(f"{len(rows)} folders in {folder}. Double-click to enter; Select Folder chooses the highlighted or current folder.")
+
+        def load_folder(folder):
+            candidate = Path(str(folder).strip().strip('"')).expanduser()
+            result["generation"] += 1
+            generation = result["generation"]
+            status_var.set("Reading folder in the background…")
+            entries.delete(0, "end")
+
+            def worker():
+                try:
+                    if not candidate.exists():
+                        raise FileNotFoundError(str(candidate))
+                    if not candidate.is_dir():
+                        if mode == "file" and candidate.is_file():
+                            self.root.after(0, close, str(candidate))
+                            return
+                        raise NotADirectoryError(str(candidate))
+                    directories, files = [], []
+                    with os.scandir(str(candidate)) as scanner:
+                        for item in scanner:
+                            try:
+                                if item.is_dir(follow_symlinks=False):
+                                    directories.append(Path(item.path))
+                                elif mode == "file" and item.is_file(follow_symlinks=False):
+                                    files.append(Path(item.path))
+                            except OSError:
+                                continue
+                    directories.sort(key=lambda path: path.name.casefold())
+                    files.sort(key=lambda path: path.name.casefold())
+                    rows = [(path, True) for path in directories] + [(path, False) for path in files]
+                    self.root.after(0, show_rows, generation, candidate, rows, None, False)
+                except Exception as exc:
+                    try:
+                        self.root.after(0, show_rows, generation, candidate, [], str(exc), False)
+                    except tk.TclError:
+                        pass
+
+            threading.Thread(target=worker, name="mimic-path-picker", daemon=True).start()
+
+        def show_drives():
+            result["generation"] += 1
+            generation = result["generation"]
+            rows = []
+            if os.name == "nt":
+                try:
+                    import ctypes
+                    mask = ctypes.windll.kernel32.GetLogicalDrives()
+                    for index, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+                        if mask & (1 << index):
+                            rows.append((Path(letter + ":\\"), True))
+                except Exception:
+                    rows = [(Path(letter + ":\\"), True) for letter in ("C", "D", "E", "F") if Path(letter + ":\\").exists()]
+            else:
+                rows = [(Path("/"), True)]
+            show_rows(generation, None, rows, None, True)
+
+        def go_to_path(_event=None):
+            value = path_var.get().strip().strip('"')
+            if not value:
+                return
+            if value.casefold().startswith("this pc"):
+                show_drives()
+            else:
+                load_folder(value)
+
+        def go_up():
+            if result["drives"] or not result["current"]:
+                show_drives()
+                return
+            current = Path(result["current"])
+            parent = current.parent
+            if parent == current:
+                show_drives()
+            else:
+                load_folder(parent)
+
+        def go_home():
+            load_folder(Path.home())
+
+        def selected_row():
+            picked = entries.curselection()
+            if not picked:
+                return None
+            index = picked[0]
+            rows = result["rows"]
+            return rows[index] if 0 <= index < len(rows) else None
+
+        def activate_row(_event=None):
+            row = selected_row()
+            if not row:
+                return
+            path, is_dir = row
+            if is_dir:
+                load_folder(path)
+            elif mode == "file":
+                close(str(path))
+
+        nav = tk.Frame(address, bg="#0b1220")
+        # Navigation controls live below the address bar so the path remains wide.
+        nav.pack_forget()
+        nav_bar = tk.Frame(dialog, bg="#0b1220", padx=16, pady=(8, 2))
+        nav_bar.pack(fill="x", before=list_frame)
+        ttk.Button(nav_bar, text="Go", command=go_to_path).pack(side="left")
+        ttk.Button(nav_bar, text="Up", command=go_up).pack(side="left", padx=(6, 0))
+        ttk.Button(nav_bar, text="Home", command=go_home).pack(side="left", padx=(6, 0))
+        if os.name == "nt":
+            ttk.Button(nav_bar, text="This PC / Drives", command=show_drives).pack(side="left", padx=(6, 0))
+
+        buttons = tk.Frame(dialog, bg="#0b1220", padx=16, pady=12)
+        buttons.pack(fill="x")
+
+        def select_location():
+            row = selected_row()
+            if mode == "folder":
+                if row and row[1]:
+                    close(str(row[0]))
+                elif result["current"] and Path(result["current"]).is_dir():
+                    close(result["current"])
+                else:
+                    status_var.set("Choose a valid folder first.")
+            else:
+                if row and not row[1]:
+                    close(str(row[0]))
+                elif row and row[1]:
+                    load_folder(row[0])
+                else:
+                    status_var.set("Select a file, or double-click it in the list.")
+
+        button_label = "Select Folder" if mode == "folder" else "Select File"
+        ttk.Button(buttons, text=button_label, command=select_location).pack(side="right")
+        ttk.Button(buttons, text="Cancel", command=lambda: close(None)).pack(side="right", padx=(0, 8))
+        entries.bind("<Double-Button-1>", activate_row)
+        path_entry.bind("<Return>", go_to_path)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: close(None))
+        dialog.update_idletasks()
+        dialog.lift()
+        dialog.grab_set()
+        path_entry.focus_set()
+        load_folder(initial_path)
+        self.root.wait_window(dialog)
+        return result["path"]
+
     def _browse_analysis_file(self):
-        path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Choose a target application or package",
-            filetypes=[("All files", "*.*")]
+        path = self._path_picker(
+            "Choose a target application or package",
+            mode="file",
+            initial=self.analysis_target_var.get() or Path.home(),
         )
         if path:
             self.analysis_target_var.set(path)
             self._suggest_analysis_output(path)
 
     def _browse_analysis_folder(self):
-        path = filedialog.askdirectory(
-            parent=self.root,
-            title="Choose an application installation or source folder",
-            mustexist=True,
+        path = self._path_picker(
+            "Choose an application installation or source folder",
+            mode="folder",
+            initial=self.analysis_target_var.get() or Path.home(),
         )
         if path:
             self.analysis_target_var.set(path)
@@ -345,15 +567,19 @@ class MimicWindowsApp:
         self.analysis_output_var.set(str(Path.home() / "MimicProjects" / "Analyses" / ((name or "app") + "-analysis")))
 
     def _browse_analysis_output(self):
-        path = filedialog.askdirectory(
-            parent=self.root, title="Choose analysis results folder", mustexist=True
+        path = self._path_picker(
+            "Choose analysis results folder",
+            mode="folder",
+            initial=self.analysis_output_var.get() or Path.home(),
         )
         if path:
             self.analysis_output_var.set(path)
 
     def _browse_reconstruction_output(self):
-        path = filedialog.askdirectory(
-            parent=self.root, title="Choose desktop reconstruction output folder", mustexist=True
+        path = self._path_picker(
+            "Choose desktop reconstruction output folder",
+            mode="folder",
+            initial=self.output_var.get() or Path.home(),
         )
         if path:
             self.output_var.set(path)
