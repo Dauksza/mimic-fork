@@ -328,6 +328,8 @@ class MimicWindowsApp:
         initial_path = Path(initial).expanduser() if initial else Path.home()
         if initial_path.is_file():
             initial_path = initial_path.parent
+        while not initial_path.is_dir() and initial_path != initial_path.parent:
+            initial_path = initial_path.parent
         if not initial_path.is_dir():
             initial_path = Path.home()
 
@@ -421,7 +423,9 @@ class MimicWindowsApp:
                         raise NotADirectoryError(str(candidate))
                     directories, files = [], []
                     with os.scandir(str(candidate)) as scanner:
-                        for item in scanner:
+                        for index, item in enumerate(scanner):
+                            if index >= 5000:
+                                break
                             try:
                                 if item.is_dir(follow_symlinks=False):
                                     directories.append(Path(item.path))
