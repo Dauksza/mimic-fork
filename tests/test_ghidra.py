@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mimic.ghidra import _windows_batch_invocation, find_ghidra_home
+from mimic.ghidra import _windows_batch_invocation, _write_windows_batch_wrapper, find_ghidra_home
 
 
 def test_finds_ghidra_nested_inside_downloaded_archive_folder(tmp_path, monkeypatch):
@@ -21,7 +21,7 @@ def test_finds_ghidra_nested_inside_downloaded_archive_folder(tmp_path, monkeypa
     assert find_ghidra_home() == install.resolve()
 
 
-def test_windows_batch_invocation_preserves_nested_quotes_and_paths_with_spaces():
+def test_windows_batch_invocation_hides_parentheses_in_initial_cmd_line(tmp_path):
     command = [
         r"C:\Ghidra 12.1.4\support\analyzeHeadless.bat",
         r"C:\Users\Chris\MimicProjects\Analyses\Product Updata Tool-analysis\project",
@@ -34,10 +34,18 @@ def test_windows_batch_invocation_preserves_nested_quotes_and_paths_with_spaces(
         "250",
         "8",
     ]
-    invocation = _windows_batch_invocation(command, r"C:\Windows\System32\cmd.exe")
+    wrapper = _write_windows_batch_wrapper(command, tmp_path)
+    try:
+        invocation = _windows_batch_invocation([str(wrapper)], r"C:\Windows\System32\cmd.exe")
+        wrapper_text = wrapper.read_text(encoding="utf-8")
 
-    # Start with unquoted call so cmd.exe does not strip the argument quote
-    # pair and expose parentheses inside app paths.
-    assert ' /d /c call "C:\\Ghidra 12.1.4\\support\\analyzeHeadless.bat"' in invocation
-    assert '"C:\\Program Files (x86)\\THINKCAR\\Product Updata Tool\\Product Updata Tool.exe"' in invocation
-    assert invocation.endswith(" 8")
+        # The first cmd.exe command line contains only the wrapper path;
+        # the troublesome Program Files (x86) argument stays inside the .cmd.
+        assert "Program Files (x86)" not in invocation
+        assert ' /d /c call "' in invocation
+        assert "Program Files (x86)" in wrapper_text
+        assert '"C:\\Program Files (x86)\\THINKCAR\\Product Updata Tool\\Product Updata Tool.exe"' in wrapper_text
+        assert wrapper_text.startswith("@echo off\\r\\n")
+        assert wrapper_text.endswith("exit /b %ERRORLEVEL%\\r\\n")
+    finally:
+        wrapper.unlink(missing_ok=True)
