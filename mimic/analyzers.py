@@ -1104,7 +1104,9 @@ def _analyze_windows_folder(target, out_dir, ghidra_home, status, max_decompile=
                 ghidra_home=ghidra_home, max_modules=6, max_decompile=max(50, min(250, max_decompile // max(1, min(len(executables), 10)))), on_status=status,
             ))
         except GhidraError as exc:
-            report["warnings"].append("Analysis of " + str(binary) + " failed: " + str(exc)[:350])
+            report["warnings"].append(
+                "Analysis of " + binary.name + " failed: " + str(exc)[:1400]
+            )
     report["executables_found"] = len(executables)
     return report
 
@@ -1148,6 +1150,26 @@ def _collect_tool_availability(value, result=None):
         for child in value[:100]:
             if isinstance(child, (dict, list)):
                 _collect_tool_availability(child, result)
+    return result
+
+
+def _collect_nested_warnings(value, result=None):
+    """Collect warnings from nested analyzer reports without duplicating entries."""
+    if result is None:
+        result = []
+    if isinstance(value, dict):
+        warnings = value.get("warnings", [])
+        if isinstance(warnings, list):
+            for warning in warnings:
+                if isinstance(warning, str) and warning.strip() and warning not in result:
+                    result.append(warning)
+        for key, child in value.items():
+            if key != "warnings" and isinstance(child, (dict, list)):
+                _collect_nested_warnings(child, result)
+    elif isinstance(value, list):
+        for child in value:
+            if isinstance(child, (dict, list)):
+                _collect_nested_warnings(child, result)
     return result
 
 
@@ -1254,10 +1276,26 @@ def reverse_engineer(target, out_dir, *, ghidra_home=None, max_decompile=1000, o
     except (GhidraError, ReverseEngineeringError, OSError, ValueError, json.JSONDecodeError, zipfile.BadZipFile, TypeError) as exc:
         report["warnings"].append(str(exc))
         report["analysis_error"] = str(exc)
+    nested_warnings = _collect_nested_warnings(report.get("analysis", {}))
+    for warning in nested_warnings:
+        if warning not in report["warnings"]:
+            report["warnings"].append(warning)
     report["analysis_elapsed_seconds"] = round(time.monotonic() - start, 2)
     report["tool_availability"] = _collect_tool_availability(report.get("analysis", {}))
     if ghidra_home or find_ghidra_home():
         report["tool_availability"].setdefault("ghidra", {"status": "installed", "available": True})
+    analysis_result = report.get("analysis", {})
+    if detection.get("type") == "windows_application_folder" and isinstance(analysis_result, dict):
+        attempted = min(int(analysis_result.get("executables_found", 0) or 0), 10)
+        successful = len(analysis_result.get("binary_reports", []))
+        if attempted:
+            status = "ok" if successful >= attempted else ("failed" if successful == 0 else "partial")
+            report["tool_availability"]["ghidra"] = {
+                "status": status,
+                "available": bool(ghidra_home or find_ghidra_home()),
+                "binaries_attempted": attempted,
+                "binaries_analyzed": successful,
+            }
     manifest_path = output / "mimic-analysis-manifest.json"
     manifest_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     report["manifest_path"] = str(manifest_path)
