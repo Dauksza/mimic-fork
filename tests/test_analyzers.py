@@ -45,6 +45,20 @@ def test_detect_runtime_recognizes_common_package_types(tmp_path):
     assert detect_runtime(archive)["type"] == "system_package"
 
 
+def test_detect_runtime_recognizes_windows_application_folder_nested_one_level(tmp_path):
+    vendor_root = tmp_path / "THINKCAR"
+    app_root = vendor_root / "Product Updata Tool"
+    app_root.mkdir(parents=True)
+    (app_root / "ProductUpdataTool.exe").write_bytes(b"MZ")
+    (app_root / "helper.dll").write_bytes(b"MZ")
+
+    detection = detect_runtime(vendor_root)
+
+    assert detection["type"] == "windows_application_folder"
+    assert detection["confidence"] == "medium"
+    assert str(app_root.resolve()) in detection["application_root_candidates"]
+
+
 def test_detect_runtime_identifies_android_zip_from_members(tmp_path):
     package = tmp_path / "android-like.zip"
     with zipfile.ZipFile(package, "w") as archive:
@@ -88,6 +102,21 @@ def test_wat_text_analysis_does_not_need_external_tools(tmp_path):
     report = _analyze_wasm(path, tmp_path / "wasm")
     assert report["type"] == "webassembly"
     assert "entry" in report["text_excerpt"]
+
+
+def test_source_inventory_does_not_write_into_target_directory(tmp_path):
+    target = tmp_path / "THINKCAR"
+    target.mkdir()
+    (target / "reset32.bat").write_text("@echo off\n", encoding="utf-8")
+    output = tmp_path / "analysis"
+
+    report = reverse_engineer(target, output)
+
+    assert report["detection"]["type"] == "directory"
+    assert not (target / "mimic-source-inventory.json").exists()
+    inventory_path = Path(report["analysis"]["source_inventory"]["report_path"])
+    assert inventory_path == (output / "source-analysis" / "mimic-source-inventory.json").resolve()
+    assert inventory_path.is_file()
 
 
 def test_reverse_engineer_source_file_writes_a_manifest(tmp_path):
