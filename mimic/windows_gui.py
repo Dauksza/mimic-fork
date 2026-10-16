@@ -41,6 +41,7 @@ class MimicWindowsApp:
         self.discovery_stopped = None
         self.capture_dir = None
         self.capture_setup_cancelled = False
+        self.capture_attempt_id = 0
         self.capture_picker = None
         self.capture_target_rows = []
         self.busy = False
@@ -770,6 +771,7 @@ class MimicWindowsApp:
         except Exception as exc:
             messagebox.showerror("Cannot prepare capture", str(exc), parent=self.root)
             return
+        self.capture_attempt_id += 1
         self.capture_setup_cancelled = False
         self.arm_button.configure(state="disabled")
         self.stop_button.configure(state="disabled")
@@ -901,6 +903,7 @@ class MimicWindowsApp:
 
     def _cancel_capture_setup(self):
         self.capture_setup_cancelled = True
+        self.capture_attempt_id += 1
         if self.discovery_stopped:
             self.discovery_stopped.set()
         self.discovery_stopped = None
@@ -916,28 +919,31 @@ class MimicWindowsApp:
         if not self.capture_dir:
             self._cancel_capture_setup()
             return
+        attempt_id = self.capture_attempt_id
         self.stop_button.configure(state="normal")
         self._log("Taking a baseline of current windows in the background. Open the target app after Mimic says it is waiting.")
 
         def worker():
             try:
                 stopped, watcher = start_armed_capture(
-                    self.capture_dir, self._target_detected, self._status_from_worker
+                    self.capture_dir,
+                    lambda target: self._target_detected(target, attempt_id),
+                    self._status_from_worker,
                 )
                 try:
-                    self.root.after(0, self._watch_started, stopped, watcher)
+                    self.root.after(0, self._watch_started, stopped, watcher, attempt_id)
                 except tk.TclError:
                     stopped.set()
             except Exception as exc:
                 try:
-                    self.root.after(0, self._watch_start_failed, str(exc))
+                    self.root.after(0, self._watch_start_failed, str(exc), attempt_id)
                 except tk.TclError:
                     pass
 
         threading.Thread(target=worker, name="mimic-prepare-window-watch", daemon=True).start()
 
-    def _watch_started(self, stopped, watcher):
-        if self.capture_setup_cancelled or self.capture:
+    def _watch_started(self, stopped, watcher, attempt_id):
+        if attempt_id != self.capture_attempt_id or self.capture_setup_cancelled or self.capture:
             stopped.set()
             return
         self.discovery_stopped = stopped
@@ -945,21 +951,25 @@ class MimicWindowsApp:
         self.stop_button.configure(state="normal")
         self._log("Waiting for a newly opened app window. Existing windows are not auto-selected.")
 
-    def _watch_start_failed(self, error):
+    def _watch_start_failed(self, error, attempt_id):
+        if attempt_id != self.capture_attempt_id or self.capture_setup_cancelled:
+            return
         self._log("Could not start window discovery: " + error)
         messagebox.showerror("Window discovery failed", error, parent=self.root)
         self._cancel_capture_setup()
 
-    def _target_detected(self, target):
-        if self.capture_setup_cancelled:
+    def _target_detected(self, target, attempt_id=None):
+        attempt_id = self.capture_attempt_id if attempt_id is None else attempt_id
+        if attempt_id != self.capture_attempt_id or self.capture_setup_cancelled:
             return
         try:
-            self.root.after(0, self._start_target_capture, target)
+            self.root.after(0, self._start_target_capture, target, attempt_id)
         except tk.TclError:
             pass
 
-    def _start_target_capture(self, target):
-        if self.capture_setup_cancelled or self.capture:
+    def _start_target_capture(self, target, attempt_id=None):
+        attempt_id = self.capture_attempt_id if attempt_id is None else attempt_id
+        if attempt_id != self.capture_attempt_id or self.capture_setup_cancelled or self.capture:
             return
         if self.discovery_stopped and self.discovery_stopped.is_set():
             return
@@ -1004,6 +1014,7 @@ class MimicWindowsApp:
         if self.capture_picker:
             return
         self.capture_setup_cancelled = True
+        self.capture_attempt_id += 1
         if self.discovery_stopped:
             self.discovery_stopped.set()
         active = self.capture
