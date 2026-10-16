@@ -45,6 +45,30 @@ def _safe_text(value, limit=220):
 
 
 
+def count_capture_states(session_dir):
+    """Count valid saved UI states; an empty events.jsonl is not a successful capture."""
+    event_path = Path(session_dir) / "events.jsonl"
+    if not event_path.is_file():
+        return 0
+    count = 0
+    try:
+        with event_path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                windows = row.get("windows") if isinstance(row, dict) else None
+                if isinstance(windows, list) and windows:
+                    count += 1
+    except OSError:
+        return 0
+    return count
+
+
+
 _PROCESS_PATH_CACHE = {}
 
 
